@@ -53,7 +53,9 @@ async function loadCapacitor() {
   pluginAttempted = true;
   try {
     capacitorModule = await import("@capacitor/core");
-  } catch {
+    console.log("[ReliviaBridge] loadCapacitor success");
+  } catch (e) {
+    console.error("[ReliviaBridge] loadCapacitor error:", e);
     capacitorModule = null;
   }
   return capacitorModule;
@@ -62,10 +64,16 @@ async function loadCapacitor() {
 /** True when running inside the Android APK (Capacitor native). */
 export async function isNative(): Promise<boolean> {
   const cap = await loadCapacitor();
-  if (!cap) return false;
+  if (!cap) {
+    console.log("[ReliviaBridge] isNative: no Capacitor module");
+    return false;
+  }
   try {
-    return cap.Capacitor.isNativePlatform();
-  } catch {
+    const result = cap.Capacitor.isNativePlatform();
+    console.log("[ReliviaBridge] isNative:", result);
+    return result;
+  } catch (e) {
+    console.error("[ReliviaBridge] isNative error:", e);
     return false;
   }
 }
@@ -84,14 +92,32 @@ export function isNativeSync(): boolean {
 }
 
 async function getPlugin(): Promise<ReliviaHealthPluginApi | null> {
-  if (pluginCache) return pluginCache;
+  if (pluginCache) {
+    console.log("[ReliviaBridge] getPlugin: using cached plugin");
+    return pluginCache;
+  }
   const cap = await loadCapacitor();
-  if (!cap || !cap.Capacitor.isNativePlatform()) return null;
+  if (!cap) {
+    console.log("[ReliviaBridge] getPlugin: no Capacitor");
+    return null;
+  }
+  if (!cap.Capacitor.isNativePlatform()) {
+    console.log("[ReliviaBridge] getPlugin: not native platform");
+    return null;
+  }
   try {
     const { registerPlugin } = await import("@capacitor/core");
     pluginCache = registerPlugin<ReliviaHealthPluginApi>("ReliviaHealth");
+    console.log("[ReliviaBridge] getPlugin: registered ReliviaHealth plugin");
+    // Also check if it has any methods
+    if (pluginCache && typeof pluginCache.getAppVersion === 'function') {
+      console.log("[ReliviaBridge] getPlugin: plugin has getAppVersion method");
+    } else {
+      console.warn("[ReliviaBridge] getPlugin: plugin does NOT have getAppVersion method");
+    }
     return pluginCache;
-  } catch {
+  } catch (e) {
+    console.error("[ReliviaBridge] getPlugin error:", e);
     return null;
   }
 }
@@ -126,13 +152,24 @@ export async function requestHealthPermissions(): Promise<{
   granted: string[];
   allGranted: boolean;
 }> {
+  console.log("[ReliviaBridge] requestHealthPermissions called");
   const plugin = await getPlugin();
-  if (!plugin) throw new Error("Monitoring health data unavailable");
+  if (!plugin) {
+    console.error("[ReliviaBridge] requestHealthPermissions: no plugin");
+    throw new Error("Monitoring health data unavailable");
+  }
   const TIMEOUT_MS = 7_000;
   const timeout = new Promise<never>((_, reject) =>
     setTimeout(() => reject(new Error("PERMISSION_TIMEOUT")), TIMEOUT_MS)
   );
-  return Promise.race([plugin.requestHealthPermissions(), timeout]);
+  try {
+    const result = await Promise.race([plugin.requestHealthPermissions(), timeout]);
+    console.log("[ReliviaBridge] requestHealthPermissions result:", result);
+    return result;
+  } catch (e) {
+    console.error("[ReliviaBridge] requestHealthPermissions error:", e);
+    throw e;
+  }
 }
 
 export type AppVersion = {
@@ -142,17 +179,28 @@ export type AppVersion = {
 
 /** APK version (null only on web — native always resolves or throws). */
 export async function getAppVersion(): Promise<AppVersion | null> {
+  console.log("[ReliviaBridge] getAppVersion calling");
   const plugin = await getPlugin();
-  if (!plugin) return null;
+  if (!plugin) {
+    console.log("[ReliviaBridge] getAppVersion: no plugin");
+    return null;
+  }
   if (typeof plugin.getAppVersion !== "function") {
+    console.error("[ReliviaBridge] getAppVersion: plugin.getAppVersion is not a function");
     throw new Error("BRIDGE_NO_GETAPPVERSION");
   }
-  const res = await withTimeout(plugin.getAppVersion(), 2500, "getAppVersion");
-  if (!res || typeof res.version !== "string") return null;
-  return {
-    version: res.version,
-    versionCode: typeof res.versionCode === "number" ? res.versionCode : -1,
-  };
+  try {
+    const res = await withTimeout(plugin.getAppVersion(), 2500, "getAppVersion");
+    console.log("[ReliviaBridge] getAppVersion result:", res);
+    if (!res || typeof res.version !== "string") return null;
+    return {
+      version: res.version,
+      versionCode: typeof res.versionCode === "number" ? res.versionCode : -1,
+    };
+  } catch (e) {
+    console.error("[ReliviaBridge] getAppVersion error:", e);
+    throw e;
+  }
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -442,35 +490,59 @@ export async function openNotificationSettings(): Promise<void> {
  * pre-13 devices where no runtime grant is needed). Null plugin → false.
  */
 export async function checkNotificationPermission(): Promise<boolean> {
+  console.log("[ReliviaBridge] checkNotificationPermission called");
+  // Try custom plugin first
   const plugin = await getPlugin();
-  if (!plugin) return false;
+  if (plugin) {
+    try {
+      const res = await plugin.checkNotificationPermission();
+      console.log("[ReliviaBridge] checkNotificationPermission from plugin:", res);
+      return res.granted;
+    } catch (e) {
+      console.error("[ReliviaBridge] checkNotificationPermission plugin error:", e);
+      // fall through
+    }
+  } else {
+    console.log("[ReliviaBridge] checkNotificationPermission: no plugin");
+  }
+  // Fallback: use LocalNotifications plugin to check status
   try {
-    const res = await plugin.checkNotificationPermission();
-    return res.granted;
-  } catch {
+    const { LocalNotifications } = await import("@capacitor/local-notifications");
+    const status = await LocalNotifications.checkPermissions();
+    console.log("[ReliviaBridge] checkNotificationPermission from LocalNotifications:", status);
+    return status.display === "granted";
+  } catch (e) {
+    console.error("[ReliviaBridge] checkNotificationPermission LocalNotifications error:", e);
     return false;
   }
 }
 
 /** Prompt the Android 13+ notification permission dialog. */
 export async function requestNotificationPermission(): Promise<boolean> {
+  console.log("[ReliviaBridge] requestNotificationPermission called");
   const ask = async (): Promise<boolean> => {
     // 1. Try custom plugin first for direct Android permission request
     const plugin = await getPlugin();
     if (plugin) {
       try {
         const res = await plugin.requestNotificationPermission();
+        console.log("[ReliviaBridge] requestNotificationPermission from plugin:", res);
         if (res.granted) return true;
-      } catch {
+      } catch (e) {
+        console.error("[ReliviaBridge] requestNotificationPermission plugin error:", e);
         /* fallback */
       }
+    } else {
+      console.log("[ReliviaBridge] requestNotificationPermission: no plugin");
     }
     // 2. Try official Capacitor LocalNotifications plugin request
     try {
       const { LocalNotifications } = await import("@capacitor/local-notifications");
       const status = await LocalNotifications.requestPermissions();
+      console.log("[ReliviaBridge] requestNotificationPermission from LocalNotifications:", status);
       return status.display === "granted";
-    } catch {
+    } catch (e) {
+      console.error("[ReliviaBridge] requestNotificationPermission LocalNotifications error:", e);
       return false;
     }
   };

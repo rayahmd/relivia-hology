@@ -65,6 +65,7 @@ class ReliviaHealthPlugin : Plugin() {
      */
     @PluginMethod
     fun getAppVersion(call: PluginCall) {
+        android.util.Log.d("ReliviaHealth", "getAppVersion called")
         val ret = JSObject()
         try {
             val pm = context.packageManager
@@ -82,6 +83,7 @@ class ReliviaHealthPlugin : Plugin() {
             ret.put("version", "unknown")
             ret.put("versionCode", -1)
         }
+        android.util.Log.d("ReliviaHealth", "getAppVersion result: version=${ret.optString("version")}, code=${ret.optLong("versionCode")}")
         call.resolve(ret)
     }
 
@@ -113,13 +115,18 @@ class ReliviaHealthPlugin : Plugin() {
      */
     @PluginMethod
     fun requestHealthPermissions(call: PluginCall) {
+        android.util.Log.d("ReliviaHealth", "requestHealthPermissions called")
         val activity = activity ?: run {
+            android.util.Log.e("ReliviaHealth", "requestHealthPermissions: Activity unavailable")
             call.reject("Activity unavailable")
             return
         }
         when (HealthConnectClient.getSdkStatus(context)) {
-            HealthConnectClient.SDK_AVAILABLE -> Unit // proceed
+            HealthConnectClient.SDK_AVAILABLE -> {
+                android.util.Log.d("ReliviaHealth", "requestHealthPermissions: SDK available")
+            }
             HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> {
+                android.util.Log.d("ReliviaHealth", "requestHealthPermissions: SDK update required")
                 call.reject(
                     "HEALTH_CONNECT_UPDATE_REQUIRED",
                     "Health Connect needs an update from the Play Store",
@@ -127,6 +134,7 @@ class ReliviaHealthPlugin : Plugin() {
                 return
             }
             else -> {
+                android.util.Log.d("ReliviaHealth", "requestHealthPermissions: SDK unavailable")
                 call.reject(
                     "HEALTH_CONNECT_UNAVAILABLE",
                     "Health Connect is not available on this device",
@@ -135,6 +143,7 @@ class ReliviaHealthPlugin : Plugin() {
             }
         }
         if (healthPermissionInFlight) {
+            android.util.Log.d("ReliviaHealth", "requestHealthPermissions: permission in flight")
             call.reject(
                 "PERMISSION_IN_PROGRESS",
                 "A Health Connect permission request is already showing",
@@ -154,6 +163,7 @@ class ReliviaHealthPlugin : Plugin() {
                     val ret = JSObject()
                     ret.put("granted", JSONArray(already.toList()))
                     ret.put("allGranted", true)
+                    android.util.Log.d("ReliviaHealth", "requestHealthPermissions: already granted, resolving")
                     call.resolve(ret)
                     return@Thread
                 }
@@ -168,9 +178,11 @@ class ReliviaHealthPlugin : Plugin() {
                         activity,
                         HealthConnectReader.READ_PERMISSIONS,
                     )
+                    android.util.Log.d("ReliviaHealth", "requestHealthPermissions: launching permission screen")
                     startActivityForResult(call, intent, "onHealthPermissionResult")
                 } catch (e: Exception) {
                     healthPermissionInFlight = false
+                    android.util.Log.e("ReliviaHealth", "requestHealthPermissions: launch failed", e)
                     call.reject(
                         "PERMISSION_LAUNCH_FAILED",
                         "Could not open the Health Connect permission screen: ${e.message}",
@@ -183,8 +195,12 @@ class ReliviaHealthPlugin : Plugin() {
 
     @ActivityCallback
     private fun onHealthPermissionResult(call: PluginCall?, result: ActivityResult) {
+        android.util.Log.d("ReliviaHealth", "onHealthPermissionResult called, resultCode=${result.resultCode}")
         healthPermissionInFlight = false
-        if (call == null) return
+        if (call == null) {
+            android.util.Log.d("ReliviaHealth", "onHealthPermissionResult: call is null")
+            return
+        }
         // Back-press / dismissal included: always settle by re-querying the
         // current granted set (never hang, never manual-parse the result).
         Thread {
@@ -192,6 +208,7 @@ class ReliviaHealthPlugin : Plugin() {
                 val granted = runBlocking {
                     HealthConnectReader.grantedPermissions(context)
                 }
+                android.util.Log.d("ReliviaHealth", "onHealthPermissionResult: granted permissions: $granted")
                 val ret = JSObject()
                 ret.put("granted", JSONArray(granted.toList()))
                 ret.put(
@@ -200,6 +217,7 @@ class ReliviaHealthPlugin : Plugin() {
                 )
                 call.resolve(ret)
             } catch (e: Exception) {
+                android.util.Log.e("ReliviaHealth", "onHealthPermissionResult: exception", e)
                 call.reject("PERMISSION_FAILED", e.message, e)
             }
         }.start()
@@ -289,8 +307,11 @@ class ReliviaHealthPlugin : Plugin() {
     /** Current POST_NOTIFICATIONS state (always granted below Android 13). */
     @PluginMethod
     fun checkNotificationPermission(call: PluginCall) {
+        android.util.Log.d("ReliviaHealth", "checkNotificationPermission called")
         val ret = JSObject()
-        ret.put("granted", isNotificationGranted())
+        val granted = isNotificationGranted()
+        android.util.Log.d("ReliviaHealth", "checkNotificationPermission result: $granted")
+        ret.put("granted", granted)
         call.resolve(ret)
     }
 
@@ -302,19 +323,25 @@ class ReliviaHealthPlugin : Plugin() {
      */
     @PluginMethod
     fun requestNotificationPermission(call: PluginCall) {
+        android.util.Log.d("ReliviaHealth", "requestNotificationPermission called")
         if (isNotificationGranted()) {
+            android.util.Log.d("ReliviaHealth", "requestNotificationPermission: already granted")
             val ret = JSObject()
             ret.put("granted", true)
             call.resolve(ret)
             return
         }
+        android.util.Log.d("ReliviaHealth", "requestNotificationPermission: requesting via Capacitor permission")
         requestPermissionForAlias(NOTIFICATION_ALIAS, call, "onNotificationPermissionResult")
     }
 
     @PermissionCallback
     private fun onNotificationPermissionResult(call: PluginCall) {
+        android.util.Log.d("ReliviaHealth", "onNotificationPermissionResult called")
+        val granted = isNotificationGranted()
+        android.util.Log.d("ReliviaHealth", "onNotificationPermissionResult: granted=$granted")
         val ret = JSObject()
-        ret.put("granted", isNotificationGranted())
+        ret.put("granted", granted)
         call.resolve(ret)
     }
 
