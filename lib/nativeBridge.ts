@@ -138,13 +138,12 @@ export async function requestHealthPermissions(): Promise<{
 /** APK versionName (null on web or on old APKs without the method). */
 export async function getAppVersion(): Promise<string | null> {
   const plugin = await getPlugin();
-  if (!plugin || typeof plugin.getAppVersion !== "function") return null;
-  try {
-    const res = await plugin.getAppVersion();
-    return res.version ?? null;
-  } catch {
-    return null;
+  if (!plugin) return null;
+  if (typeof plugin.getAppVersion !== "function") {
+    throw new Error("BRIDGE_NO_GETAPPVERSION");
   }
+  const res = await plugin.getAppVersion();
+  return res.version ?? null;
 }
 
 /** Read recent health data. Returns null on web (caller falls back to simulation). */

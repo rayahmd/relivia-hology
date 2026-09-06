@@ -34,10 +34,11 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
   const [message, setMessage] = useState<string | null>(null);
   const [showSettingsFallback, setShowSettingsFallback] = useState(false);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [appVersionError, setAppVersionError] = useState<string | null>(null);
 
   // Web build marker — bump when this file's flow changes so a mismatch
   // between installed APK and deployed web is visible at a glance.
-  const WEB_BUILD = "2026-09-06d";
+  const WEB_BUILD = "2026-09-06e";
 
   useEffect(() => {
     let cancelled = false;
@@ -57,9 +58,17 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
         }
         try {
           const v = await getAppVersion();
-          if (!cancelled) setAppVersion(v);
-        } catch {
-          /* old APK without the method */
+          if (!cancelled) {
+            setAppVersion(v);
+            setAppVersionError(v ? null : "NULL_VERSION");
+          }
+        } catch (e) {
+          // Old APK or unregistered plugin — surface the RAW error so the
+          // exact cause is visible instead of guessing.
+          if (!cancelled) {
+            setAppVersion(null);
+            setAppVersionError(e instanceof Error ? e.message : String(e));
+          }
         }
       }
     })();
@@ -269,7 +278,9 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
       {native && (
         <div className="mt-3 text-[11px] text-faint">
           Aplikasi v{appVersion ?? "?"} • Web {WEB_BUILD}
-          {appVersion === null && " — APK lama terdeteksi, install ulang APK terbaru"}
+          {appVersion === null && (
+            <> — {appVersionError ?? "memeriksa…"}; install ulang APK terbaru bila versi tidak tampil</>
+          )}
         </div>
       )}
 
