@@ -11,7 +11,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { flushHealthQueue } from "@/lib/healthSyncQueue";
-import { notifyAgent } from "@/lib/nativeBridge";
+import { ensureMonitoringChannel, isNative, notifyAgent } from "@/lib/nativeBridge";
 
 export type PendingNotification = {
   type: "agent_question" | "insight_ready";
@@ -68,11 +68,15 @@ function saveSeen(seen: Set<string>) {
  * AutoMonitorProvider (PRD §23–§25).
  *
  * - Polls /api/notifications/dispatch for agent sessions needing the caregiver.
- * - Fires the native / web notification once per session (dedup via local seen-set).
- * - Flushes the offline health queue when back online.
- * - Handles Capacitor deep link relivia://agent?session=<id> → /agent?session=<id>.
- * - Renders an in-app banner as fallback so the trigger is visible even when
- *   OS notification permission is denied (PRD §10).
+ * - Native Android: fires a REAL OS notification via Capacitor
+ *   LocalNotifications; the in-app banner is suppressed unless the OS
+ *   notification could not be posted (permission denied) — last-resort
+ *   fallback so the trigger is never silently lost.
+ * - Browser: web Notification API + in-app banner fallback (unchanged).
+ * - Dedup: backend (one active session) + local seen-set + stable OS
+ *   notification ids (re-polls overwrite, never stack).
+ * - Handles Capacitor deep link relivia://agent?session=<id> AND
+ *   LocalNotifications taps → /agent?session=<id> (resume existing session).
  */
 export default function AutoMonitorProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -116,9 +120,17 @@ export default function AutoMonitorProvider({ children }: { children: ReactNode 
         if (fresh && !stopped) {
           seenRef.current!.add(`${fresh.type}:${fresh.sessionId}`);
           saveSeen(seenRef.current!);
-          setPending(fresh);
-          // Fire OS-level notification too (native plugin or web fallback).
-          notifyAgent({ type: fresh.type, sessionId: fresh.sessionId }).catch(() => {});
+          // Fire the OS-level notification (native LN or web fallback).
+          // Returns false when nothing was posted (e.g. native permission
+          // denied) — only then show the in-app banner as last resort.
+          const posted = await notifyAgent({
+            type: fresh.type,
+            sessionId: fresh.sessionId,
+          }).catch(() => false);
+          const onNative = await isNative().catch(() => false);
+          if (!onNative || !posted) {
+            if (!stopped) setPending(fresh);
+          }
         }
       } catch {
         /* offline / transient — next poll retries */
@@ -134,6 +146,7 @@ export default function AutoMonitorProvider({ children }: { children: ReactNode 
   }, []);
 
   // Capacitor deep link: relivia://agent?session=<id> (PRD §25).
+  // Used by worker-posted notifications (native PendingIntent path).
   useEffect(() => {
     let remove: (() => void) | undefined;
     (async () => {
@@ -146,7 +159,10 @@ export default function AutoMonitorProvider({ children }: { children: ReactNode 
             const url = new URL(event.url);
             if (url.protocol === "relivia:" && url.host === "agent") {
               const session = url.searchParams.get("session");
-              if (session) router.push(`/agent?session=${session}`);
+              if (session) {
+                dismiss();
+                router.push(`/agent?session=${session}`);
+              }
             }
           } catch {
             /* malformed deep link — ignore */
@@ -158,7 +174,40 @@ export default function AutoMonitorProvider({ children }: { children: ReactNode 
       }
     })();
     return () => remove?.();
-  }, [router]);
+  }, [router, dismiss]);
+
+  // LocalNotifications tap (native): extra { type, sessionId } →
+  // resume the EXISTING agent session, never start a new investigation.
+  // Also ensures the OS channel exists while the app runs.
+  useEffect(() => {
+    let remove: (() => void) | undefined;
+    (async () => {
+      try {
+        const { Capacitor } = await import("@capacitor/core");
+        if (!Capacitor.isNativePlatform()) return;
+        await ensureMonitoringChannel().catch(() => false);
+        const { LocalNotifications } = await import("@capacitor/local-notifications");
+        const listener = await LocalNotifications.addListener(
+          "localNotificationActionPerformed",
+          (action: {
+            notification: { extra?: { type?: string; sessionId?: string } | null };
+          }) => {
+            const extra = action.notification?.extra;
+            const sessionId =
+              typeof extra?.sessionId === "string" ? extra.sessionId : null;
+            if (sessionId) {
+              dismiss();
+              router.push(`/agent?session=${sessionId}`);
+            }
+          }
+        );
+        remove = () => listener.remove();
+      } catch {
+        /* not native — ignore */
+      }
+    })();
+    return () => remove?.();
+  }, [router, dismiss]);
 
   // Monitoring-active flag persisted per device (permission onboarding state).
   useEffect(() => {

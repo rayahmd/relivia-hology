@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
 import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
@@ -13,27 +14,48 @@ import androidx.core.app.NotificationManagerCompat
 /**
  * Builds the caregiver notification (PRD §21–§23).
  *
+ * Channel "relivia-monitoring" is SHARED with the Capacitor
+ * LocalNotifications path (same id → one channel, one sound policy):
+ * HIGH importance (heads-up), beep from res/raw, vibration.
+ * Used by HealthSyncWorker, which has no JS bridge in background.
+ *
  * The notification body NEVER contains the agent question itself —
  * it is only a trigger. Extra payload carries { type, sessionId }
  * so a tap deep-links to /agent?session=<id> (PRD §25).
  */
 object NotificationHelper {
 
-    const val CHANNEL_ID = "relivia_agent"
+    const val CHANNEL_ID = "relivia-monitoring"
     const val EXTRA_TYPE = "relivia.type"
     const val EXTRA_SESSION_ID = "relivia.sessionId"
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val soundUri = Uri.parse(
+                "android.resource://${context.packageName}/${context.resources.getIdentifier(
+                    "relivia_beep", "raw", context.packageName
+                )}"
+            )
+            val audioAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Relivia Agent",
-                NotificationManager.IMPORTANCE_DEFAULT,
+                "Relivia Monitoring",
+                NotificationManager.IMPORTANCE_HIGH,
             ).apply {
                 description = "Pemberitahuan investigasi dan insight Relivia"
+                setSound(soundUri, audioAttributes)
+                enableVibration(true)
             }
             val manager =
                 context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            // Drop the legacy channel from older builds (one-time cleanup).
+            try {
+                manager.deleteNotificationChannel("relivia_agent")
+            } catch (_: Exception) {
+            }
             manager.createNotificationChannel(channel)
         }
     }
@@ -84,13 +106,13 @@ object NotificationHelper {
         )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(com.relivia.app.R.drawable.ic_stat_icon)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
 
         try {

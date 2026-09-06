@@ -10,6 +10,7 @@ import {
   healthAvailability,
   isNative,
   openHealthSettings,
+  openNotificationSettings,
   requestHealthPermissions,
   requestNotificationPermission,
 } from "@/lib/nativeBridge";
@@ -36,7 +37,7 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
 
   // Web build marker — bump when this file's flow changes so a mismatch
   // between installed APK and deployed web is visible at a glance.
-  const WEB_BUILD = "2026-09-06c";
+  const WEB_BUILD = "2026-09-06d";
 
   useEffect(() => {
     let cancelled = false;
@@ -88,7 +89,10 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
   /** Fire one real system notification as proof it works (best effort). */
   async function fireConfirmationNotification(): Promise<boolean> {
     try {
+      const { ensureMonitoringChannel } = await import("@/lib/nativeBridge");
+      await ensureMonitoringChannel().catch(() => false);
       const { LocalNotifications } = await import("@capacitor/local-notifications");
+      const { NOTIFICATION_CHANNEL_ID } = await import("@/lib/notify");
       await LocalNotifications.schedule({
         notifications: [
           {
@@ -96,6 +100,9 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
             body: "Monitoring aktif. Notifikasi sistem berfungsi — investigasi berikutnya akan muncul di sini.",
             id: 1001,
             schedule: { at: new Date(Date.now() + 1500) },
+            channelId: NOTIFICATION_CHANNEL_ID,
+            autoCancel: true,
+            isExactNotification: false,
           },
         ],
       });
@@ -113,6 +120,10 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
       const onNative = await isNative();
 
       if (onNative) {
+        // Request Android 13+ notification permission FIRST so system notifications work
+        // regardless of Health Connect outcome
+        const notifGranted = await requestNotificationPermission();
+
         // 1. Health Connect permission (explicit, PRD §10)
         let perm;
         try {
@@ -124,13 +135,12 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
         if (!perm.allGranted) {
           setShowSettingsFallback(true);
           setMessage(
-            "Izin Health Connect belum lengkap. Buka Pengaturan, aktifkan semua izin baca untuk Relivia, lalu tekan Connect lagi. Check-in harian tetap bisa dipakai."
+            `Izin Health Connect belum lengkap. Buka Pengaturan, aktifkan semua izin baca untuk Relivia, lalu tekan Connect lagi.${
+              !notifGranted ? " (Izin notifikasi sistem HP juga belum diaktifkan)." : ""
+            }`
           );
           return;
         }
-        // 2. Android 13+ notification runtime permission — WITHOUT this,
-        //    system notifications never post (only the in-app banner shows).
-        const notifGranted = await requestNotificationPermission();
         // 3. Schedule background worker with the caregiver's session token
         //    (worker authenticates via Authorization: Bearer, PRD §11).
         const supabase = createClient();
@@ -175,6 +185,29 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
     }
   }
 
+  async function handleRequestNotifOnly() {
+    setBusy(true);
+    try {
+      const granted = await requestNotificationPermission();
+      if (granted) {
+        const confirmed = await fireConfirmationNotification();
+        setMessage(
+          confirmed
+            ? "✅ Izin notifikasi sistem berhasil diaktifkan!"
+            : "✅ Izin notifikasi sistem diizinkan."
+        );
+      } else {
+        setMessage(
+          "⚠️ Izin notifikasi ditolak oleh sistem. Buka Pengaturan > Aplikasi > Relivia > Notifikasi untuk mengaktifkan manual."
+        );
+      }
+    } catch (e) {
+      setMessage(`Gagal meminta izin notifikasi: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="card p-5 mb-5">
       <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
@@ -207,13 +240,30 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
             : "Kamu membuka Relivia di browser: sinkronisasi berjalan saat halaman /health dibuka atau lewat tombol simulasi. Di APK Android, sinkronisasi berjalan otomatis di background via Health Connect."}
       </p>
 
-      {showSettingsFallback && native && (
-        <button
-          onClick={() => openHealthSettings()}
-          className="mt-3 text-sm font-semibold px-4 py-2.5 rounded-xl border-2 border-border hover:border-primary/40 transition"
-        >
-          ⚙️ Buka Pengaturan Health Connect
-        </button>
+      {native && (
+        <div className="flex gap-2 flex-wrap mt-3">
+          {showSettingsFallback && (
+            <button
+              onClick={() => openHealthSettings()}
+              className="text-xs font-semibold px-3.5 py-2 rounded-xl border border-border hover:border-primary/40 transition"
+            >
+              ⚙️ Buka Pengaturan Health Connect
+            </button>
+          )}
+          <button
+            onClick={handleRequestNotifOnly}
+            disabled={busy}
+            className="text-xs font-semibold px-3.5 py-2 rounded-xl border border-border hover:border-primary/40 transition"
+          >
+            🔔 Minta Izin Notifikasi Sistem
+          </button>
+          <button
+            onClick={() => openNotificationSettings()}
+            className="text-xs font-semibold px-3.5 py-2 rounded-xl border border-border hover:border-primary/40 transition"
+          >
+            ⚙️ Buka Pengaturan Notifikasi HP
+          </button>
+        </div>
       )}
 
       {native && (

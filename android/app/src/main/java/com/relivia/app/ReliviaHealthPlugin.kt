@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.result.ActivityResult
+import androidx.core.content.ContextCompat
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.work.BackoffPolicy
@@ -114,42 +115,23 @@ class ReliviaHealthPlugin : Plugin() {
                 return
             }
         }
-        val requestContract =
-            PermissionController.createRequestPermissionResultContract()
-        permissionContract = requestContract
-        val intent = requestContract.createIntent(
-            activity,
-            HealthConnectReader.READ_PERMISSIONS,
-        )
-        // Fast path: already granted earlier (e.g. via Health Connect
-        // settings) — resolve immediately instead of opening the screen.
-        Thread {
-            try {
-                val already = runBlocking {
-                    HealthConnectReader.grantedPermissions(context)
-                }
-                if (already.containsAll(HealthConnectReader.READ_PERMISSIONS)) {
-                    val ret = JSObject()
-                    ret.put("granted", JSONArray(already.toList()))
-                    ret.put("allGranted", true)
-                    call.resolve(ret)
-                    return@Thread
-                }
-                activity.runOnUiThread {
-                    try {
-                        startActivityForResult(call, intent, "onHealthPermissionResult")
-                    } catch (e: Exception) {
-                        call.reject(
-                            "PERMISSION_LAUNCH_FAILED",
-                            "Could not open the Health Connect permission screen: ${e.message}",
-                            e,
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                call.reject("PERMISSION_FAILED", e.message, e)
-            }
-        }.start()
+        try {
+            val requestContract =
+                PermissionController.createRequestPermissionResultContract()
+            permissionContract = requestContract
+            val intent = requestContract.createIntent(
+                activity,
+                HealthConnectReader.READ_PERMISSIONS,
+            )
+            // Launch permission screen directly without blocking UI thread
+            startActivityForResult(call, intent, "onHealthPermissionResult")
+        } catch (e: Exception) {
+            call.reject(
+                "PERMISSION_LAUNCH_FAILED",
+                "Could not open the Health Connect permission screen: ${e.message}",
+                e,
+            )
+        }
     }
 
     @ActivityCallback
@@ -299,7 +281,10 @@ class ReliviaHealthPlugin : Plugin() {
 
     private fun isNotificationGranted(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
-        return getPermissionState(NOTIFICATION_ALIAS) == PermissionState.GRANTED
+        return ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
     }
 
     /** Shows the agent notification immediately (used after foreground sync). */
@@ -326,6 +311,31 @@ class ReliviaHealthPlugin : Plugin() {
             val intent = Intent(
                 HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS
             )
+            activity?.startActivity(intent)
+            val ret = JSObject()
+            ret.put("opened", true)
+            call.resolve(ret)
+        } catch (e: Exception) {
+            call.reject("OPEN_FAILED", e.message, e)
+        }
+    }
+
+    /**
+     * Opens system Notification Settings for Relivia package so caregiver
+     * can enable notifications if system runtime dialog was previously denied.
+     */
+    @PluginMethod
+    fun openNotificationSettings(call: PluginCall) {
+        try {
+            val intent = Intent().apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    action = android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS
+                    putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                } else {
+                    action = android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                    data = android.net.Uri.fromParts("package", context.packageName, null)
+                }
+            }
             activity?.startActivity(intent)
             val ret = JSObject()
             ret.put("opened", true)

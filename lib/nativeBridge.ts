@@ -4,11 +4,20 @@
  * Single entry point from Next.js to Capacitor native capabilities:
  * Health Connect, background worker, notification, permissions, deep link.
  *
- * - On Android native: talks to ReliviaHealthPlugin (Kotlin).
+ * - On Android native: talks to ReliviaHealthPlugin (Kotlin) and
+ *   @capacitor/local-notifications for REAL OS notifications.
  * - On web: every method degrades gracefully to simulation / no-op so the
  *   app stays fully usable in the browser (PRD §10: monitoring unavailable
  *   must not break check-in and other features).
  */
+
+import {
+  NOTIFICATION_CHANNEL_ID,
+  NOTIFICATION_CHANNEL_NAME,
+  NOTIFICATION_SOUND,
+  stableNotificationId,
+  type NotificationType,
+} from "@/lib/notify";
 
 export type NativeHealthPoint = {
   dataType: string;
@@ -32,6 +41,7 @@ type ReliviaHealthPluginApi = {
   checkNotificationPermission: () => Promise<{ granted: boolean }>;
   requestNotificationPermission: () => Promise<{ granted: boolean }>;
   openHealthSettings: () => Promise<{ opened: boolean }>;
+  openNotificationSettings: () => Promise<{ opened: boolean }>;
 };
 
 let capacitorModule: typeof import("@capacitor/core") | null = null;
@@ -118,7 +128,7 @@ export async function requestHealthPermissions(): Promise<{
 }> {
   const plugin = await getPlugin();
   if (!plugin) throw new Error("Monitoring health data unavailable");
-  const TIMEOUT_MS = 120_000;
+  const TIMEOUT_MS = 7_000;
   const timeout = new Promise<never>((_, reject) =>
     setTimeout(() => reject(new Error("PERMISSION_TIMEOUT")), TIMEOUT_MS)
   );
@@ -173,20 +183,18 @@ export async function disableBackgroundSync(): Promise<void> {
 
 /**
  * Show the agent notification immediately (foreground-sync path).
- * On native uses ReliviaHealthPlugin; on web falls back to the
- * Notification API (permission permitting) — body text identical (PRD §21–22).
+ *
+ * - Native Android: REAL OS notification via @capacitor/local-notifications
+ *   on channel "relivia-monitoring" (HIGH, heads-up). Never the browser
+ *   Notification API. Returns true only when actually scheduled.
+ * - Browser: Notification API fallback (permission permitting).
+ * Body text identical in both paths (PRD §21–22), never containing the
+ * agent question itself.
  */
 export async function notifyAgent(opts: { type: string; sessionId: string }): Promise<boolean> {
   const plugin = await getPlugin();
   if (plugin) {
-    try {
-      // Honest result: native returns notified=false when the system
-      // notification could not be posted (e.g. permission missing).
-      const res = await plugin.notifyAgent(opts);
-      return res.notified;
-    } catch {
-      return false;
-    }
+    return notifyAgentNative(opts.type, opts.sessionId);
   }
   // Web fallback: Notification API (best effort, silent if denied)
   try {
@@ -212,11 +220,82 @@ export async function notifyAgent(opts: { type: string; sessionId: string }): Pr
   return false;
 }
 
+/**
+ * Create (idempotent) the Android channel for agent triggers.
+ * importance 4 = HIGH → heads-up. Sound from res/raw.
+ */
+export async function ensureMonitoringChannel(): Promise<boolean> {
+  try {
+    const { LocalNotifications } = await import("@capacitor/local-notifications");
+    await LocalNotifications.createChannel({
+      id: NOTIFICATION_CHANNEL_ID,
+      name: NOTIFICATION_CHANNEL_NAME,
+      description: "Pemberitahuan investigasi dan insight Relivia",
+      importance: 4,
+      sound: NOTIFICATION_SOUND,
+      vibration: true,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Post a REAL Android system notification for an agent trigger.
+ * Returns true only when the OS accepted the schedule. Never resolves
+ * true on permission denial (callers fall back to the in-app banner).
+ */
+export async function notifyAgentNative(type: string, sessionId: string): Promise<boolean> {
+  try {
+    if (!(await checkNotificationPermission())) return false;
+    await ensureMonitoringChannel();
+    const { LocalNotifications } = await import("@capacitor/local-notifications");
+    const nType = (type === "insight_ready" ? "insight_ready" : "agent_question") as NotificationType;
+    const title = "Relivia";
+    const body =
+      nType === "agent_question"
+        ? "Perubahan pada pola pasien terdeteksi. Relivia membutuhkan konteks tambahan untuk melanjutkan analisis."
+        : "Relivia menemukan insight baru tentang pola pasien.";
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          title,
+          body,
+          id: stableNotificationId(nType, sessionId),
+          schedule: { at: new Date(Date.now() + 500) },
+          channelId: NOTIFICATION_CHANNEL_ID,
+          extra: { type: nType, sessionId },
+          autoCancel: true,
+          // Inexact alarm: avoids the "Alarms & reminders" settings detour
+          // on Android 12+ for an immediate notification.
+          isExactNotification: false,
+          // Heads-up presentation even when the app is foregrounded.
+          foreground: true,
+        },
+      ],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function openHealthSettings(): Promise<void> {
   const plugin = await getPlugin();
   if (!plugin) return;
   try {
     await plugin.openHealthSettings();
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function openNotificationSettings(): Promise<void> {
+  const plugin = await getPlugin();
+  if (!plugin) return;
+  try {
+    await plugin.openNotificationSettings();
   } catch {
     /* ignore */
   }
@@ -240,14 +319,29 @@ export async function checkNotificationPermission(): Promise<boolean> {
 
 /** Prompt the Android 13+ notification permission dialog. */
 export async function requestNotificationPermission(): Promise<boolean> {
-  const plugin = await getPlugin();
-  if (!plugin) return false;
-  try {
-    const res = await plugin.requestNotificationPermission();
-    return res.granted;
-  } catch {
-    return false;
-  }
+  const ask = async (): Promise<boolean> => {
+    // 1. Try custom plugin first for direct Android permission request
+    const plugin = await getPlugin();
+    if (plugin) {
+      try {
+        const res = await plugin.requestNotificationPermission();
+        if (res.granted) return true;
+      } catch {
+        /* fallback */
+      }
+    }
+    // 2. Try official Capacitor LocalNotifications plugin request
+    try {
+      const { LocalNotifications } = await import("@capacitor/local-notifications");
+      const status = await LocalNotifications.requestPermissions();
+      return status.display === "granted";
+    } catch {
+      return false;
+    }
+  };
+
+  const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3_000));
+  return Promise.race([ask(), timeout]);
 }
 
 /** Backend base URL for the native worker (no trailing slash). */

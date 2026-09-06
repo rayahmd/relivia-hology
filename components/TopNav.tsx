@@ -54,8 +54,8 @@ export default function TopNav({ patientName, patientAge }: { patientName: strin
   }
 
   return (
-    <div className="sticky top-0 z-20 bg-white border-b border-border">
-      <div className="flex items-center justify-between gap-3 px-4 md:px-7 py-3">
+    <div className="sticky top-0 z-20 bg-white border-b border-border pt-[max(env(safe-area-inset-top),14px)]">
+      <div className="flex items-center justify-between gap-3 px-4 md:px-7 py-2.5">
         <div className="flex items-center gap-2.5">
           <Logo size={30} />
           <span className="font-extrabold text-lg hidden sm:inline">Relivia</span>
