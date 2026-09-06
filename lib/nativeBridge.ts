@@ -19,7 +19,7 @@ export type NativeHealthPoint = {
 
 type ReliviaHealthPluginApi = {
   isAvailable: () => Promise<{ available: boolean; sdkStatus?: number }>;
-  requestPermissions: () => Promise<{ granted: string[]; allGranted: boolean }>;
+  requestHealthPermissions: () => Promise<{ granted: string[]; allGranted: boolean }>;
   readHealth: (opts: { daysBack?: number }) => Promise<{ data: NativeHealthPoint[] }>;
   enableBackgroundSync: (opts: {
     backendUrl: string;
@@ -106,7 +106,7 @@ export async function requestHealthPermissions(): Promise<{
 }> {
   const plugin = await getPlugin();
   if (!plugin) throw new Error("Monitoring health data unavailable");
-  return plugin.requestPermissions();
+  return plugin.requestHealthPermissions();
 }
 
 /** Read recent health data. Returns null on web (caller falls back to simulation). */

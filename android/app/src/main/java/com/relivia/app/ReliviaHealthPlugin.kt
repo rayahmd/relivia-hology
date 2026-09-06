@@ -1,6 +1,7 @@
 package com.relivia.app
 
 import android.content.Intent
+import androidx.activity.result.ActivityResult
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.work.BackoffPolicy
@@ -14,15 +15,19 @@ import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
+import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
 import java.time.Duration
+import kotlinx.coroutines.runBlocking
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Capacitor bridge for the Next.js layer (PRD §7–§8).
  *
  * JS usage (see lib/nativeBridge.ts):
  *   ReliviaHealth.isAvailable()
- *   ReliviaHealth.requestPermissions()
+ *   ReliviaHealth.requestHealthPermissions()
  *   ReliviaHealth.readHealth({ daysBack })
  *   ReliviaHealth.enableBackgroundSync({ backendUrl, patientId, token })
  *   ReliviaHealth.notifyAgent({ type, sessionId })
@@ -32,8 +37,6 @@ import java.time.Duration
  */
 @CapacitorPlugin(name = "ReliviaHealth")
 class ReliviaHealthPlugin : Plugin() {
-
-    private var pendingPermissionCall: PluginCall? = null
 
     @PluginMethod
     fun isAvailable(call: PluginCall) {
@@ -45,11 +48,13 @@ class ReliviaHealthPlugin : Plugin() {
     }
 
     /**
-     * Opens the Health Connect permission screen. The result is delivered
-     * to handleOnActivityResult; the JS promise resolves with granted set.
+     * Opens the Health Connect permission screen. Named requestHealthPermissions
+     * (not requestPermissions) to avoid hiding Plugin.requestPermissions(PluginCall).
+     * The result is delivered to onHealthPermissionResult; the JS promise
+     * resolves with the granted set.
      */
     @PluginMethod
-    fun requestPermissions(call: PluginCall) {
+    fun requestHealthPermissions(call: PluginCall) {
         val activity = activity ?: run {
             call.reject("Activity unavailable")
             return
@@ -60,14 +65,34 @@ class ReliviaHealthPlugin : Plugin() {
             call.reject("HEALTH_CONNECT_UNAVAILABLE", "Health Connect is not available")
             return
         }
-        pendingPermissionCall = call
         val requestContract =
             PermissionController.createRequestPermissionResultContract()
         val intent = requestContract.createIntent(
             activity,
             HealthConnectReader.READ_PERMISSIONS,
         )
-        startActivityForResult(call, intent, REQUEST_HEALTH_PERMISSIONS)
+        startActivityForResult(call, intent, "onHealthPermissionResult")
+    }
+
+    @ActivityCallback
+    private fun onHealthPermissionResult(call: PluginCall?, result: ActivityResult) {
+        if (call == null) return
+        Thread {
+            try {
+                val granted = runBlocking {
+                    HealthConnectReader.grantedPermissions(context)
+                }
+                val ret = JSObject()
+                ret.put("granted", JSONArray(granted.toList()))
+                ret.put(
+                    "allGranted",
+                    granted.containsAll(HealthConnectReader.READ_PERMISSIONS),
+                )
+                call.resolve(ret)
+            } catch (e: Exception) {
+                call.reject("PERMISSION_FAILED", e.message, e)
+            }
+        }.start()
     }
 
     @PluginMethod
@@ -75,14 +100,14 @@ class ReliviaHealthPlugin : Plugin() {
         val daysBack = call.getInt("daysBack", 1) ?: 1
         Thread {
             try {
-                val points = kotlinx.coroutines.runBlocking {
+                val points = runBlocking {
                     HealthConnectReader.readDaily(context, daysBack.coerceIn(1, 7))
                 }
                 val ret = JSObject()
-                val arr = org.json.JSONArray()
+                val arr = JSONArray()
                 for (p in points) {
                     arr.put(
-                        org.json.JSONObject()
+                        JSONObject()
                             .put("dataType", p.dataType)
                             .put("value", p.value)
                             .put("unit", p.unit)
@@ -184,34 +209,4 @@ class ReliviaHealthPlugin : Plugin() {
         }
     }
 
-    override fun handleOnActivityResult(
-        requestCode: Int,
-        resultCode: Int,
-        data: Intent?,
-    ) {
-        super.handleOnActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQUEST_HEALTH_PERMISSIONS) return
-        val call = pendingPermissionCall ?: return
-        pendingPermissionCall = null
-        Thread {
-            try {
-                val granted = kotlinx.coroutines.runBlocking {
-                    HealthConnectReader.grantedPermissions(context)
-                }
-                val ret = JSObject()
-                ret.put("granted", org.json.JSONArray(granted.toList()))
-                ret.put(
-                    "allGranted",
-                    granted.containsAll(HealthConnectReader.READ_PERMISSIONS),
-                )
-                call.resolve(ret)
-            } catch (e: Exception) {
-                call.reject("PERMISSION_FAILED", e.message, e)
-            }
-        }.start()
-    }
-
-    companion object {
-        private const val REQUEST_HEALTH_PERMISSIONS = 0xCA1A
-    }
 }

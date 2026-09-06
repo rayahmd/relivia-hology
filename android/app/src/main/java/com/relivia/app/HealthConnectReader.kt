@@ -2,13 +2,13 @@ package com.relivia.app
 
 import android.content.Context
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
-import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
@@ -27,16 +27,11 @@ import kotlinx.coroutines.withContext
  */
 object HealthConnectReader {
 
+    // connect-client 1.1.0: getReadPermission takes a Kotlin KClass.
     val READ_PERMISSIONS = setOf(
-        androidx.health.connect.client.permission.HealthPermission.getReadPermission(
-            SleepSessionRecord::class.java
-        ),
-        androidx.health.connect.client.permission.HealthPermission.getReadPermission(
-            StepsRecord::class.java
-        ),
-        androidx.health.connect.client.permission.HealthPermission.getReadPermission(
-            HeartRateRecord::class.java
-        ),
+        HealthPermission.getReadPermission(SleepSessionRecord::class),
+        HealthPermission.getReadPermission(StepsRecord::class),
+        HealthPermission.getReadPermission(HeartRateRecord::class),
     )
 
     data class HealthPoint(
@@ -79,7 +74,7 @@ object HealthConnectReader {
             // ── Sleep (sum of session durations, hours) ──
             val sessions = client.readRecords(
                 ReadRecordsRequest(
-                    SleepSessionRecord::class.java,
+                    SleepSessionRecord::class,
                     timeRangeFilter = TimeRangeFilter.between(start, end),
                 )
             ).records
@@ -107,15 +102,17 @@ object HealthConnectReader {
             }
 
             // ── Heart rate (daily average bpm) ──
+            // HeartRateRecord.samples: List<Sample>, Sample.beatsPerMinute: Long.
             val hrRecords = client.readRecords(
                 ReadRecordsRequest(
-                    HeartRateRecord::class.java,
+                    HeartRateRecord::class,
                     timeRangeFilter = TimeRangeFilter.between(start, end),
                 )
             ).records
             val samples = hrRecords.flatMap { it.samples }
             if (samples.isNotEmpty()) {
-                val avg = samples.sumOf { it.beatsPerMinute } / samples.size.toDouble()
+                val totalBeats: Long = samples.sumOf { it.beatsPerMinute }
+                val avg = totalBeats.toDouble() / samples.size.toDouble()
                 points += HealthPoint(
                     "heart_rate",
                     round2(avg),
@@ -129,8 +126,4 @@ object HealthConnectReader {
     }
 
     private fun round2(v: Double): Double = kotlin.math.round(v * 100) / 100.0
-
-    @Suppress("unused")
-    private fun instantOf(day: LocalDate, zone: ZoneId): Instant =
-        day.atStartOfDay(zone).toInstant()
 }

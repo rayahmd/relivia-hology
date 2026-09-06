@@ -51,10 +51,14 @@ export default function LoginPage() {
   }
 
   // Auto-trigger Google sign-in if the landing page linked here with ?provider=google
+  // Also surface OAuth callback failures (?error=auth_failed) as a clear message.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("provider") === "google") {
       handleGoogleSignIn();
+    }
+    if (params.get("error") === "auth_failed") {
+      setError("Login Google gagal — sesi tidak terbentuk. Coba lagi.");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
