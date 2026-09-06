@@ -106,7 +106,7 @@ export async function healthAvailability(): Promise<{
   const plugin = await getPlugin();
   if (!plugin) return null;
   try {
-    const res = await withTimeout(plugin.isAvailable(), 10000, "isAvailable");
+    const res = await withTimeout(plugin.isAvailable(), 4000, "isAvailable");
     return { available: res.available, sdkStatus: res.sdkStatus };
   } catch {
     return { available: false };
@@ -142,7 +142,7 @@ export async function getAppVersion(): Promise<string | null> {
   if (typeof plugin.getAppVersion !== "function") {
     throw new Error("BRIDGE_NO_GETAPPVERSION");
   }
-  const res = await withTimeout(plugin.getAppVersion(), 10000, "getAppVersion");
+  const res = await withTimeout(plugin.getAppVersion(), 2500, "getAppVersion");
   return res.version ?? null;
 }
 
@@ -168,7 +168,7 @@ export type BridgeDiagnostics = {
 
 /**
  * Full bridge self-test. Nothing here can hang: header read is sync JS,
- * every native call has a 10s timeout. Display the result verbatim —
+ * every native call has a fast timeout. Display the result verbatim —
  * it pinpoints the failing layer (registration vs dispatch vs method).
  */
 export async function getBridgeDiagnostics(): Promise<BridgeDiagnostics> {
@@ -210,20 +210,20 @@ export async function getBridgeDiagnostics(): Promise<BridgeDiagnostics> {
     diag.headerError = e instanceof Error ? e.message : String(e);
   }
 
-  // 2. isAvailable (10s timeout — hang becomes visible error).
+  // 2. isAvailable (2.5s timeout — hang becomes visible error).
   try {
     const plugin = await getPlugin();
     if (!plugin) {
       diag.sdkError = "NO_PLUGIN_PROXY";
     } else {
-      const res = await withTimeout(plugin.isAvailable(), 10000, "isAvailable");
+      const res = await withTimeout(plugin.isAvailable(), 2500, "isAvailable");
       diag.sdkStatus = res.sdkStatus ?? (res.available ? 1 : -1);
     }
   } catch (e) {
     diag.sdkError = e instanceof Error ? e.message : String(e);
   }
 
-  // 3. getAppVersion (10s timeout).
+  // 3. getAppVersion (2.5s timeout).
   try {
     diag.appVersion = await getAppVersion();
     if (!diag.appVersion) diag.appVersionError = "NULL_VERSION";

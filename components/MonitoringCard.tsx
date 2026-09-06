@@ -41,7 +41,7 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
 
   // Web build marker — bump when this file's flow changes so a mismatch
   // between installed APK and deployed web is visible at a glance.
-  const WEB_BUILD = "2026-09-06f";
+  const WEB_BUILD = "2026-09-06g";
 
   useEffect(() => {
     let cancelled = false;
@@ -50,35 +50,43 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
       if (cancelled) return;
       setNative(n);
       if (n) {
-        try {
-          const a = await healthAvailability();
-          if (!cancelled) {
-            setAvailable(a?.available ?? false);
-            setSdkStatus(a?.sdkStatus ?? null);
-          }
-        } catch {
-          if (!cancelled) setAvailable(false);
-        }
-        try {
-          const v = await getAppVersion();
-          if (!cancelled) {
-            setAppVersion(v);
-            setAppVersionError(v ? null : "NULL_VERSION");
-          }
-        } catch (e) {
-          // Old APK or unregistered plugin — surface the RAW error so the
-          // exact cause is visible instead of guessing.
-          if (!cancelled) {
-            setAppVersion(null);
-            setAppVersionError(e instanceof Error ? e.message : String(e));
-          }
-        }
-        try {
-          const d = await getBridgeDiagnostics();
-          if (!cancelled) setDiag(d);
-        } catch {
-          /* diagnostics must never break the card */
-        }
+        // Run health availability, app version, and diagnostics concurrently so
+        // one slow/hanging call does not delay the others.
+        await Promise.allSettled([
+          (async () => {
+            try {
+              const a = await healthAvailability();
+              if (!cancelled) {
+                setAvailable(a?.available ?? false);
+                setSdkStatus(a?.sdkStatus ?? null);
+              }
+            } catch {
+              if (!cancelled) setAvailable(false);
+            }
+          })(),
+          (async () => {
+            try {
+              const v = await getAppVersion();
+              if (!cancelled) {
+                setAppVersion(v);
+                setAppVersionError(v ? null : "NULL_VERSION");
+              }
+            } catch (e) {
+              if (!cancelled) {
+                setAppVersion(null);
+                setAppVersionError(e instanceof Error ? e.message : String(e));
+              }
+            }
+          })(),
+          (async () => {
+            try {
+              const d = await getBridgeDiagnostics();
+              if (!cancelled) setDiag(d);
+            } catch {
+              /* diagnostics must never break the card */
+            }
+          })(),
+        ]);
       }
     })();
     return () => {
