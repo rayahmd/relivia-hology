@@ -7,12 +7,14 @@ import {
   backendBaseUrl,
   enableBackgroundSync,
   getAppVersion,
+  getBridgeDiagnostics,
   healthAvailability,
   isNative,
   openHealthSettings,
   openNotificationSettings,
   requestHealthPermissions,
   requestNotificationPermission,
+  type BridgeDiagnostics,
 } from "@/lib/nativeBridge";
 
 /**
@@ -35,10 +37,11 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
   const [showSettingsFallback, setShowSettingsFallback] = useState(false);
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [appVersionError, setAppVersionError] = useState<string | null>(null);
+  const [diag, setDiag] = useState<BridgeDiagnostics | null>(null);
 
   // Web build marker — bump when this file's flow changes so a mismatch
   // between installed APK and deployed web is visible at a glance.
-  const WEB_BUILD = "2026-09-06e";
+  const WEB_BUILD = "2026-09-06f";
 
   useEffect(() => {
     let cancelled = false;
@@ -69,6 +72,12 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
             setAppVersion(null);
             setAppVersionError(e instanceof Error ? e.message : String(e));
           }
+        }
+        try {
+          const d = await getBridgeDiagnostics();
+          if (!cancelled) setDiag(d);
+        } catch {
+          /* diagnostics must never break the card */
         }
       }
     })();
@@ -282,6 +291,17 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
             <> — {appVersionError ?? "memeriksa…"}; install ulang APK terbaru bila versi tidak tampil</>
           )}
         </div>
+      )}
+
+      {native && diag && (
+        <details className="mt-2 text-[11px] text-faint">
+          <summary className="cursor-pointer font-semibold">Detail bridge (kirim screenshot ini)</summary>
+          <pre className="mt-1 whitespace-pre-wrap break-all bg-bg rounded-lg p-2">
+{`header: ${diag.hasPluginHeader === null ? "?" : diag.hasPluginHeader ? `ADA (${diag.headerMethods?.length ?? 0} method: ${(diag.headerMethods ?? []).join(", ") || "-"})` : "TIDAK ADA"}${diag.headerError ? ` [${diag.headerError}]` : ""}
+sdk: ${diag.sdkStatus ?? "?"}${diag.sdkError ? ` [${diag.sdkError}]` : ""}
+ver: ${diag.appVersion ?? "?"}${diag.appVersionError ? ` [${diag.appVersionError}]` : ""}`}
+          </pre>
+        </details>
       )}
 
       {message && (

@@ -38,10 +38,10 @@ type ReliviaHealthPluginApi = {
   disableBackgroundSync: () => Promise<{ scheduled: boolean }>;
   notifyAgent: (opts: { type: string; sessionId: string }) => Promise<{ notified: boolean }>;
   getAppVersion: () => Promise<{ version: string }>;
+  openNotificationSettings: () => Promise<{ opened: boolean }>;
   checkNotificationPermission: () => Promise<{ granted: boolean }>;
   requestNotificationPermission: () => Promise<{ granted: boolean }>;
   openHealthSettings: () => Promise<{ opened: boolean }>;
-  openNotificationSettings: () => Promise<{ opened: boolean }>;
 };
 
 let capacitorModule: typeof import("@capacitor/core") | null = null;
@@ -106,7 +106,7 @@ export async function healthAvailability(): Promise<{
   const plugin = await getPlugin();
   if (!plugin) return null;
   try {
-    const res = await plugin.isAvailable();
+    const res = await withTimeout(plugin.isAvailable(), 10000, "isAvailable");
     return { available: res.available, sdkStatus: res.sdkStatus };
   } catch {
     return { available: false };
@@ -142,8 +142,96 @@ export async function getAppVersion(): Promise<string | null> {
   if (typeof plugin.getAppVersion !== "function") {
     throw new Error("BRIDGE_NO_GETAPPVERSION");
   }
-  const res = await plugin.getAppVersion();
+  const res = await withTimeout(plugin.getAppVersion(), 10000, "getAppVersion");
   return res.version ?? null;
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}_TIMEOUT`)), ms);
+  });
+  return Promise.race([p.finally(() => clearTimeout(timer)), timeout]) as Promise<T>;
+}
+
+export type BridgeDiagnostics = {
+  isNative: boolean;
+  /** Raw PluginHeaders injected by native — decisive proof of registration. */
+  hasPluginHeader: boolean | null;
+  headerMethods: string[] | null;
+  headerError: string | null;
+  sdkStatus: number | null;
+  sdkError: string | null;
+  appVersion: string | null;
+  appVersionError: string | null;
+};
+
+/**
+ * Full bridge self-test. Nothing here can hang: header read is sync JS,
+ * every native call has a 10s timeout. Display the result verbatim —
+ * it pinpoints the failing layer (registration vs dispatch vs method).
+ */
+export async function getBridgeDiagnostics(): Promise<BridgeDiagnostics> {
+  const diag: BridgeDiagnostics = {
+    isNative: false,
+    hasPluginHeader: null,
+    headerMethods: null,
+    headerError: null,
+    sdkStatus: null,
+    sdkError: null,
+    appVersion: null,
+    appVersionError: null,
+  };
+  try {
+    diag.isNative = await isNative();
+  } catch (e) {
+    diag.headerError = e instanceof Error ? e.message : String(e);
+    return diag;
+  }
+  if (!diag.isNative) return diag;
+
+  // 1. PluginHeaders: injected by native at bridge init from registered
+  //    PluginHandles. Absent header = plugin never registered.
+  try {
+    const w = window as unknown as {
+      Capacitor?: { PluginHeaders?: Array<{ name: string; methods: Array<{ name: string }> }> };
+    };
+    const headers = w.Capacitor?.PluginHeaders;
+    if (!Array.isArray(headers)) {
+      diag.hasPluginHeader = false;
+      diag.headerError = "NO_PLUGIN_HEADERS_ARRAY";
+    } else {
+      const h = headers.find((x) => x?.name === "ReliviaHealth");
+      diag.hasPluginHeader = !!h;
+      diag.headerMethods = h ? h.methods.map((m) => m.name) : [];
+    }
+  } catch (e) {
+    diag.hasPluginHeader = false;
+    diag.headerError = e instanceof Error ? e.message : String(e);
+  }
+
+  // 2. isAvailable (10s timeout — hang becomes visible error).
+  try {
+    const plugin = await getPlugin();
+    if (!plugin) {
+      diag.sdkError = "NO_PLUGIN_PROXY";
+    } else {
+      const res = await withTimeout(plugin.isAvailable(), 10000, "isAvailable");
+      diag.sdkStatus = res.sdkStatus ?? (res.available ? 1 : -1);
+    }
+  } catch (e) {
+    diag.sdkError = e instanceof Error ? e.message : String(e);
+  }
+
+  // 3. getAppVersion (10s timeout).
+  try {
+    diag.appVersion = await getAppVersion();
+    if (!diag.appVersion) diag.appVersionError = "NULL_VERSION";
+  } catch (e) {
+    diag.appVersionError = e instanceof Error ? e.message : String(e);
+  }
+
+  return diag;
 }
 
 /** Read recent health data. Returns null on web (caller falls back to simulation). */
@@ -290,6 +378,7 @@ export async function openHealthSettings(): Promise<void> {
   }
 }
 
+/** Open the app's OS notification settings screen (manual fallback). */
 export async function openNotificationSettings(): Promise<void> {
   const plugin = await getPlugin();
   if (!plugin) return;
