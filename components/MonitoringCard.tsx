@@ -36,12 +36,15 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
   const [message, setMessage] = useState<string | null>(null);
   const [showSettingsFallback, setShowSettingsFallback] = useState(false);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [appVersionCode, setAppVersionCode] = useState<number | null>(null);
   const [appVersionError, setAppVersionError] = useState<string | null>(null);
   const [diag, setDiag] = useState<BridgeDiagnostics | null>(null);
 
   // Web build marker — bump when this file's flow changes so a mismatch
   // between installed APK and deployed web is visible at a glance.
-  const WEB_BUILD = "2026-09-06g";
+  // Compare with the native "build" number below; both are informational
+  // markers, neither is authoritative over the other.
+  const WEB_BUILD = "2026-09-06h";
 
   useEffect(() => {
     let cancelled = false;
@@ -68,12 +71,14 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
             try {
               const v = await getAppVersion();
               if (!cancelled) {
-                setAppVersion(v);
+                setAppVersion(v?.version ?? null);
+                setAppVersionCode(v?.versionCode ?? null);
                 setAppVersionError(v ? null : "NULL_VERSION");
               }
             } catch (e) {
               if (!cancelled) {
                 setAppVersion(null);
+                setAppVersionCode(null);
                 setAppVersionError(e instanceof Error ? e.message : String(e));
               }
             }
@@ -294,9 +299,15 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
 
       {native && (
         <div className="mt-3 text-[11px] text-faint">
-          Aplikasi v{appVersion ?? "?"} • Web {WEB_BUILD}
-          {appVersion === null && (
-            <> — {appVersionError ?? "memeriksa…"}; install ulang APK terbaru bila versi tidak tampil</>
+          {appVersion !== null ? (
+            <>
+              Aplikasi v{appVersion}
+              {appVersionCode !== null && appVersionCode >= 0 ? ` (build ${appVersionCode})` : ""} • Web {WEB_BUILD}
+            </>
+          ) : (
+            <>
+              Versi APK tak terdeteksi ({appVersionError ?? "memeriksa…"}) • Web {WEB_BUILD} — install ulang APK terbaru bila versi tidak tampil
+            </>
           )}
         </div>
       )}
@@ -305,9 +316,10 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
         <details className="mt-2 text-[11px] text-faint">
           <summary className="cursor-pointer font-semibold">Detail bridge (kirim screenshot ini)</summary>
           <pre className="mt-1 whitespace-pre-wrap break-all bg-bg rounded-lg p-2">
-{`header: ${diag.hasPluginHeader === null ? "?" : diag.hasPluginHeader ? `ADA (${diag.headerMethods?.length ?? 0} method: ${(diag.headerMethods ?? []).join(", ") || "-"})` : "TIDAK ADA"}${diag.headerError ? ` [${diag.headerError}]` : ""}
+{`header: ${diag.hasPluginHeader === null ? "?" : diag.hasPluginHeader ? `ADA (${diag.headerMethods?.length ?? 0} method)` : "TIDAK ADA"}${diag.headerError ? ` [${diag.headerError}]` : ""}
+plugin: ${diag.missingMethods.length === 0 ? "LENGKAP (native = terbaru)" : `KURANG: ${diag.missingMethods.join(", ")} → APK lama`}
 sdk: ${diag.sdkStatus ?? "?"}${diag.sdkError ? ` [${diag.sdkError}]` : ""}
-ver: ${diag.appVersion ?? "?"}${diag.appVersionError ? ` [${diag.appVersionError}]` : ""}`}
+ver: ${diag.appVersion ?? "?"}${diag.appVersionCode !== null && diag.appVersionCode >= 0 ? ` (build ${diag.appVersionCode})` : ""}${diag.appVersionError ? ` [${diag.appVersionError}]` : ""}`}
           </pre>
         </details>
       )}

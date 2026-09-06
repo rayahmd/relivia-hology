@@ -37,7 +37,7 @@ type ReliviaHealthPluginApi = {
   }) => Promise<{ scheduled: boolean }>;
   disableBackgroundSync: () => Promise<{ scheduled: boolean }>;
   notifyAgent: (opts: { type: string; sessionId: string }) => Promise<{ notified: boolean }>;
-  getAppVersion: () => Promise<{ version: string }>;
+  getAppVersion: () => Promise<{ version: string; versionCode: number }>;
   openNotificationSettings: () => Promise<{ opened: boolean }>;
   checkNotificationPermission: () => Promise<{ granted: boolean }>;
   requestNotificationPermission: () => Promise<{ granted: boolean }>;
@@ -135,15 +135,24 @@ export async function requestHealthPermissions(): Promise<{
   return Promise.race([plugin.requestHealthPermissions(), timeout]);
 }
 
-/** APK versionName (null on web or on old APKs without the method). */
-export async function getAppVersion(): Promise<string | null> {
+export type AppVersion = {
+  version: string;
+  versionCode: number;
+};
+
+/** APK version (null only on web — native always resolves or throws). */
+export async function getAppVersion(): Promise<AppVersion | null> {
   const plugin = await getPlugin();
   if (!plugin) return null;
   if (typeof plugin.getAppVersion !== "function") {
     throw new Error("BRIDGE_NO_GETAPPVERSION");
   }
   const res = await withTimeout(plugin.getAppVersion(), 2500, "getAppVersion");
-  return res.version ?? null;
+  if (!res || typeof res.version !== "string") return null;
+  return {
+    version: res.version,
+    versionCode: typeof res.versionCode === "number" ? res.versionCode : -1,
+  };
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -154,15 +163,38 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([p.finally(() => clearTimeout(timer)), timeout]) as Promise<T>;
 }
 
+/**
+ * Every @PluginMethod the current web layer may call. The diagnostics
+ * compare this contract against the native PluginHeaders to prove the
+ * installed APK bundles the latest plugin (not a stale install).
+ * Update this list when a native method is added or renamed.
+ */
+export const EXPECTED_NATIVE_METHODS = [
+  "isAvailable",
+  "getAppVersion",
+  "requestHealthPermissions",
+  "readHealth",
+  "enableBackgroundSync",
+  "disableBackgroundSync",
+  "checkNotificationPermission",
+  "requestNotificationPermission",
+  "notifyAgent",
+  "openHealthSettings",
+  "openNotificationSettings",
+] as const;
+
 export type BridgeDiagnostics = {
   isNative: boolean;
   /** Raw PluginHeaders injected by native — decisive proof of registration. */
   hasPluginHeader: boolean | null;
   headerMethods: string[] | null;
   headerError: string | null;
+  /** Native methods missing from the installed APK (stale install proof). */
+  missingMethods: string[];
   sdkStatus: number | null;
   sdkError: string | null;
   appVersion: string | null;
+  appVersionCode: number | null;
   appVersionError: string | null;
 };
 
@@ -177,9 +209,11 @@ export async function getBridgeDiagnostics(): Promise<BridgeDiagnostics> {
     hasPluginHeader: null,
     headerMethods: null,
     headerError: null,
+    missingMethods: [],
     sdkStatus: null,
     sdkError: null,
     appVersion: null,
+    appVersionCode: null,
     appVersionError: null,
   };
   try {
@@ -204,6 +238,14 @@ export async function getBridgeDiagnostics(): Promise<BridgeDiagnostics> {
       const h = headers.find((x) => x?.name === "ReliviaHealth");
       diag.hasPluginHeader = !!h;
       diag.headerMethods = h ? h.methods.map((m) => m.name) : [];
+      if (h) {
+        // Prove the installed APK bundles the latest plugin: every method
+        // the web layer may call must be exported natively.
+        const exported = new Set(diag.headerMethods);
+        diag.missingMethods = (EXPECTED_NATIVE_METHODS as readonly string[]).filter(
+          (m) => !exported.has(m)
+        );
+      }
     }
   } catch (e) {
     diag.hasPluginHeader = false;
@@ -225,8 +267,13 @@ export async function getBridgeDiagnostics(): Promise<BridgeDiagnostics> {
 
   // 3. getAppVersion (2.5s timeout).
   try {
-    diag.appVersion = await getAppVersion();
-    if (!diag.appVersion) diag.appVersionError = "NULL_VERSION";
+    const v = await getAppVersion();
+    if (v) {
+      diag.appVersion = v.version;
+      diag.appVersionCode = v.versionCode;
+    } else {
+      diag.appVersionError = "NULL_VERSION";
+    }
   } catch (e) {
     diag.appVersionError = e instanceof Error ? e.message : String(e);
   }

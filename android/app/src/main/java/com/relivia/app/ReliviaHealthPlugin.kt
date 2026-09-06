@@ -1,7 +1,6 @@
 package com.relivia.app
 
 import android.Manifest
-import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -55,18 +54,33 @@ class ReliviaHealthPlugin : Plugin() {
         const val NOTIFICATION_ALIAS = "notifications"
     }
 
-    /** Kept to parse the permission-screen result without re-querying. */
-    private var permissionContract: androidx.activity.result.contract.ActivityResultContract<Set<String>, Set<String>>? = null
+    /** Guards against concurrent permission launches (no stacked screens). */
+    @Volatile
+    private var healthPermissionInFlight = false
 
-    /** App versionName for the web layer to verify it talks to a new APK. */
+    /**
+     * App version for the web layer: versionName + versionCode read from the
+     * installed package (never hardcoded). The web layer compares this
+     * against its own WEB_BUILD marker to detect a stale APK or stale web.
+     */
     @PluginMethod
     fun getAppVersion(call: PluginCall) {
         val ret = JSObject()
         try {
-            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            val pm = context.packageManager
+            val info = pm.getPackageInfo(context.packageName, 0)
             ret.put("version", info.versionName ?: "unknown")
+            try {
+                ret.put(
+                    "versionCode",
+                    androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(info),
+                )
+            } catch (_: Exception) {
+                ret.put("versionCode", -1)
+            }
         } catch (_: PackageManager.NameNotFoundException) {
             ret.put("version", "unknown")
+            ret.put("versionCode", -1)
         }
         call.resolve(ret)
     }
@@ -83,12 +97,17 @@ class ReliviaHealthPlugin : Plugin() {
     /**
      * Opens the Health Connect permission screen. Named requestHealthPermissions
      * (not requestPermissions) to avoid hiding Plugin.requestPermissions(PluginCall).
-     * The result is delivered to onHealthPermissionResult; the JS promise
-     * resolves with the granted set.
+     *
+     * Lifecycle-safe flow: the Intent is built from Health Connect's
+     * ActivityResultContract but launched through Capacitor's managed
+     * launcher (startActivityForResult + @ActivityCallback), which owns the
+     * ActivityResultLauncher lifecycle. The result callback always re-queries
+     * the granted set — no manual ActivityResult parsing, no stored contract.
      *
      * Distinct rejection codes so the UI can guide the caregiver:
      * - HEALTH_CONNECT_UNAVAILABLE (not installed / unsupported device)
      * - HEALTH_CONNECT_UPDATE_REQUIRED (provider needs Play Store update)
+     * - PERMISSION_IN_PROGRESS (a request is already showing)
      * - PERMISSION_LAUNCH_FAILED (permission screen could not be opened;
      *   use openHealthSettings as manual fallback)
      */
@@ -115,42 +134,62 @@ class ReliviaHealthPlugin : Plugin() {
                 return
             }
         }
-        try {
-            val requestContract =
-                PermissionController.createRequestPermissionResultContract()
-            permissionContract = requestContract
-            val intent = requestContract.createIntent(
-                activity,
-                HealthConnectReader.READ_PERMISSIONS,
-            )
-            // Launch permission screen directly without blocking UI thread
-            startActivityForResult(call, intent, "onHealthPermissionResult")
-        } catch (e: Exception) {
+        if (healthPermissionInFlight) {
             call.reject(
-                "PERMISSION_LAUNCH_FAILED",
-                "Could not open the Health Connect permission screen: ${e.message}",
-                e,
+                "PERMISSION_IN_PROGRESS",
+                "A Health Connect permission request is already showing",
             )
+            return
         }
+        healthPermissionInFlight = true
+        // Fast path on a background thread: already granted earlier (e.g. via
+        // Health Connect settings) — resolve immediately, no screen launch.
+        Thread {
+            try {
+                val already = runBlocking {
+                    HealthConnectReader.grantedPermissions(context)
+                }
+                if (already.containsAll(HealthConnectReader.READ_PERMISSIONS)) {
+                    healthPermissionInFlight = false
+                    val ret = JSObject()
+                    ret.put("granted", JSONArray(already.toList()))
+                    ret.put("allGranted", true)
+                    call.resolve(ret)
+                    return@Thread
+                }
+            } catch (_: Exception) {
+                // Fall through to the permission screen.
+            }
+            activity.runOnUiThread {
+                try {
+                    val requestContract =
+                        PermissionController.createRequestPermissionResultContract()
+                    val intent = requestContract.createIntent(
+                        activity,
+                        HealthConnectReader.READ_PERMISSIONS,
+                    )
+                    startActivityForResult(call, intent, "onHealthPermissionResult")
+                } catch (e: Exception) {
+                    healthPermissionInFlight = false
+                    call.reject(
+                        "PERMISSION_LAUNCH_FAILED",
+                        "Could not open the Health Connect permission screen: ${e.message}",
+                        e,
+                    )
+                }
+            }
+        }.start()
     }
 
     @ActivityCallback
     private fun onHealthPermissionResult(call: PluginCall?, result: ActivityResult) {
+        healthPermissionInFlight = false
         if (call == null) return
+        // Back-press / dismissal included: always settle by re-querying the
+        // current granted set (never hang, never manual-parse the result).
         Thread {
             try {
-                // Prefer the result delivered by the permission screen itself;
-                // fall back to re-querying when it is absent/invalid.
-                val fromResult: Set<String>? = try {
-                    if (result.resultCode == Activity.RESULT_OK) {
-                        permissionContract?.parseResult(result.resultCode, result.data)
-                    } else {
-                        null
-                    }
-                } catch (_: Exception) {
-                    null
-                }
-                val granted = fromResult ?: runBlocking {
+                val granted = runBlocking {
                     HealthConnectReader.grantedPermissions(context)
                 }
                 val ret = JSObject()
