@@ -82,8 +82,11 @@ class HealthSyncWorker(
                     },
                 )
 
-            postJson("$backendUrl/api/health-sync", token, payload)
+            val responseBody = postJson("$backendUrl/api/health-sync", token, payload)
             Log.i(TAG, "Synced ${points.size} records")
+            // Background path has no WebView: deliver the agent trigger as a
+            // real system notification straight from the worker (PRD §21).
+            postAgentNotificationIfPresent(responseBody)
             Result.success()
         } catch (e: NonRetryableException) {
             Log.w(TAG, "Non-retryable error: ${e.message}")
@@ -94,21 +97,46 @@ class HealthSyncWorker(
         }
     }
 
-    private fun postJson(url: String, token: String, body: JSONObject) {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = 20_000
-            readTimeout = 20_000
-            doOutput = true
-            setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("Authorization", "Bearer $token")
+    private fun postJson(url: String, token: String, body: JSONObject): String {
+        var conn: HttpURLConnection? = null
+        try {
+            conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 20_000
+                readTimeout = 20_000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Authorization", "Bearer $token")
+            }
+            conn.outputStream.use { it.write(body.toString().toByteArray()) }
+            val code = conn.responseCode
+            if (code in 500..599) throw RuntimeException("Server error $code")
+            if (code == 429) throw RuntimeException("Rate limited $code")
+            if (code !in 200..299) throw NonRetryableException("HTTP $code")
+            return try {
+                conn.inputStream.bufferedReader().use { it.readText() }
+            } catch (_: Exception) {
+                "{}"
+            }
+        } finally {
+            conn?.disconnect()
         }
-        conn.outputStream.use { it.write(body.toString().toByteArray()) }
-        val code = conn.responseCode
-        conn.disconnect()
-        if (code in 500..599) throw RuntimeException("Server error $code")
-        if (code == 429) throw RuntimeException("Rate limited $code")
-        if (code !in 200..299) throw NonRetryableException("HTTP $code")
+    }
+
+    /** Posts the system notification when the backend created an agent trigger. */
+    private fun postAgentNotificationIfPresent(responseBody: String) {
+        try {
+            val notification = JSONObject(responseBody).optJSONObject("notification")
+                ?: return
+            val type = notification.optString("type").ifEmpty { return }
+            val sessionId = notification.optString("sessionId").ifEmpty { return }
+            val posted = NotificationHelper.showAgentNotification(
+                applicationContext, type, sessionId
+            )
+            Log.i(TAG, "Agent notification posted=$posted type=$type")
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not parse/notify: ${e.message}")
+        }
     }
 
     /** Thrown for auth/validation errors — surfaced as Result.failure(). */

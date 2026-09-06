@@ -28,6 +28,9 @@ type ReliviaHealthPluginApi = {
   }) => Promise<{ scheduled: boolean }>;
   disableBackgroundSync: () => Promise<{ scheduled: boolean }>;
   notifyAgent: (opts: { type: string; sessionId: string }) => Promise<{ notified: boolean }>;
+  getAppVersion: () => Promise<{ version: string }>;
+  checkNotificationPermission: () => Promise<{ granted: boolean }>;
+  requestNotificationPermission: () => Promise<{ granted: boolean }>;
   openHealthSettings: () => Promise<{ opened: boolean }>;
 };
 
@@ -83,13 +86,18 @@ async function getPlugin(): Promise<ReliviaHealthPluginApi | null> {
   }
 }
 
-/** Health Connect availability (PRD §9). Null on web. */
-export async function healthAvailability(): Promise<{ available: boolean } | null> {
+/** Health Connect availability (PRD §9). Null on web. sdkStatus passthrough
+ * lets the UI explain WHY it is unavailable (not installed vs needs update).
+ * SDK status codes: 1 = available, 2 = unavailable, 3 = update required. */
+export async function healthAvailability(): Promise<{
+  available: boolean;
+  sdkStatus?: number;
+} | null> {
   const plugin = await getPlugin();
   if (!plugin) return null;
   try {
     const res = await plugin.isAvailable();
-    return { available: res.available };
+    return { available: res.available, sdkStatus: res.sdkStatus };
   } catch {
     return { available: false };
   }
@@ -99,6 +107,10 @@ export async function healthAvailability(): Promise<{ available: boolean } | nul
  * Explicit permission request (PRD §10).
  * Throws with user-friendly message when unavailable — callers show
  * "Monitoring health data unavailable" but keep the rest of the app working.
+ *
+ * Guarded by a timeout: if the Health Connect screen never returns a
+ * result (device-specific quirk), the promise rejects instead of hanging
+ * the UI forever — callers then offer the manual settings fallback.
  */
 export async function requestHealthPermissions(): Promise<{
   granted: string[];
@@ -106,7 +118,23 @@ export async function requestHealthPermissions(): Promise<{
 }> {
   const plugin = await getPlugin();
   if (!plugin) throw new Error("Monitoring health data unavailable");
-  return plugin.requestHealthPermissions();
+  const TIMEOUT_MS = 120_000;
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("PERMISSION_TIMEOUT")), TIMEOUT_MS)
+  );
+  return Promise.race([plugin.requestHealthPermissions(), timeout]);
+}
+
+/** APK versionName (null on web or on old APKs without the method). */
+export async function getAppVersion(): Promise<string | null> {
+  const plugin = await getPlugin();
+  if (!plugin || typeof plugin.getAppVersion !== "function") return null;
+  try {
+    const res = await plugin.getAppVersion();
+    return res.version ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Read recent health data. Returns null on web (caller falls back to simulation). */
@@ -152,8 +180,10 @@ export async function notifyAgent(opts: { type: string; sessionId: string }): Pr
   const plugin = await getPlugin();
   if (plugin) {
     try {
-      await plugin.notifyAgent(opts);
-      return true;
+      // Honest result: native returns notified=false when the system
+      // notification could not be posted (e.g. permission missing).
+      const res = await plugin.notifyAgent(opts);
+      return res.notified;
     } catch {
       return false;
     }
@@ -189,6 +219,34 @@ export async function openHealthSettings(): Promise<void> {
     await plugin.openHealthSettings();
   } catch {
     /* ignore */
+  }
+}
+
+/**
+ * Android 13+ runtime notification permission (PRD §10).
+ * Returns true when system notifications are allowed (or on web /
+ * pre-13 devices where no runtime grant is needed). Null plugin → false.
+ */
+export async function checkNotificationPermission(): Promise<boolean> {
+  const plugin = await getPlugin();
+  if (!plugin) return false;
+  try {
+    const res = await plugin.checkNotificationPermission();
+    return res.granted;
+  } catch {
+    return false;
+  }
+}
+
+/** Prompt the Android 13+ notification permission dialog. */
+export async function requestNotificationPermission(): Promise<boolean> {
+  const plugin = await getPlugin();
+  if (!plugin) return false;
+  try {
+    const res = await plugin.requestNotificationPermission();
+    return res.granted;
+  } catch {
+    return false;
   }
 }
 

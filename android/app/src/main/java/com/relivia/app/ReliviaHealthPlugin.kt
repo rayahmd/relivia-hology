@@ -1,6 +1,10 @@
 package com.relivia.app
 
+import android.Manifest
+import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.result.ActivityResult
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
@@ -12,11 +16,14 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.getcapacitor.JSObject
+import com.getcapacitor.PermissionState
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
+import com.getcapacitor.annotation.Permission
+import com.getcapacitor.annotation.PermissionCallback
 import java.time.Duration
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
@@ -35,8 +42,33 @@ import org.json.JSONObject
  * Native responsibilities end here: Health Connect, background worker,
  * notification, permissions, deep link. All UI stays in Next.js (PRD §33).
  */
-@CapacitorPlugin(name = "ReliviaHealth")
+@CapacitorPlugin(
+    name = "ReliviaHealth",
+    permissions = [
+        Permission(strings = [Manifest.permission.POST_NOTIFICATIONS], alias = ReliviaHealthPlugin.NOTIFICATION_ALIAS),
+    ],
+)
 class ReliviaHealthPlugin : Plugin() {
+
+    companion object {
+        const val NOTIFICATION_ALIAS = "notifications"
+    }
+
+    /** Kept to parse the permission-screen result without re-querying. */
+    private var permissionContract: androidx.activity.result.contract.ActivityResultContract<Set<String>, Set<String>>? = null
+
+    /** App versionName for the web layer to verify it talks to a new APK. */
+    @PluginMethod
+    fun getAppVersion(call: PluginCall) {
+        val ret = JSObject()
+        try {
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            ret.put("version", info.versionName ?: "unknown")
+        } catch (_: PackageManager.NameNotFoundException) {
+            ret.put("version", "unknown")
+        }
+        call.resolve(ret)
+    }
 
     @PluginMethod
     fun isAvailable(call: PluginCall) {
@@ -52,6 +84,12 @@ class ReliviaHealthPlugin : Plugin() {
      * (not requestPermissions) to avoid hiding Plugin.requestPermissions(PluginCall).
      * The result is delivered to onHealthPermissionResult; the JS promise
      * resolves with the granted set.
+     *
+     * Distinct rejection codes so the UI can guide the caregiver:
+     * - HEALTH_CONNECT_UNAVAILABLE (not installed / unsupported device)
+     * - HEALTH_CONNECT_UPDATE_REQUIRED (provider needs Play Store update)
+     * - PERMISSION_LAUNCH_FAILED (permission screen could not be opened;
+     *   use openHealthSettings as manual fallback)
      */
     @PluginMethod
     fun requestHealthPermissions(call: PluginCall) {
@@ -59,19 +97,59 @@ class ReliviaHealthPlugin : Plugin() {
             call.reject("Activity unavailable")
             return
         }
-        if (HealthConnectClient.getSdkStatus(context) !=
-            HealthConnectClient.SDK_AVAILABLE
-        ) {
-            call.reject("HEALTH_CONNECT_UNAVAILABLE", "Health Connect is not available")
-            return
+        when (HealthConnectClient.getSdkStatus(context)) {
+            HealthConnectClient.SDK_AVAILABLE -> Unit // proceed
+            HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> {
+                call.reject(
+                    "HEALTH_CONNECT_UPDATE_REQUIRED",
+                    "Health Connect needs an update from the Play Store",
+                )
+                return
+            }
+            else -> {
+                call.reject(
+                    "HEALTH_CONNECT_UNAVAILABLE",
+                    "Health Connect is not available on this device",
+                )
+                return
+            }
         }
         val requestContract =
             PermissionController.createRequestPermissionResultContract()
+        permissionContract = requestContract
         val intent = requestContract.createIntent(
             activity,
             HealthConnectReader.READ_PERMISSIONS,
         )
-        startActivityForResult(call, intent, "onHealthPermissionResult")
+        // Fast path: already granted earlier (e.g. via Health Connect
+        // settings) — resolve immediately instead of opening the screen.
+        Thread {
+            try {
+                val already = runBlocking {
+                    HealthConnectReader.grantedPermissions(context)
+                }
+                if (already.containsAll(HealthConnectReader.READ_PERMISSIONS)) {
+                    val ret = JSObject()
+                    ret.put("granted", JSONArray(already.toList()))
+                    ret.put("allGranted", true)
+                    call.resolve(ret)
+                    return@Thread
+                }
+                activity.runOnUiThread {
+                    try {
+                        startActivityForResult(call, intent, "onHealthPermissionResult")
+                    } catch (e: Exception) {
+                        call.reject(
+                            "PERMISSION_LAUNCH_FAILED",
+                            "Could not open the Health Connect permission screen: ${e.message}",
+                            e,
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                call.reject("PERMISSION_FAILED", e.message, e)
+            }
+        }.start()
     }
 
     @ActivityCallback
@@ -79,7 +157,18 @@ class ReliviaHealthPlugin : Plugin() {
         if (call == null) return
         Thread {
             try {
-                val granted = runBlocking {
+                // Prefer the result delivered by the permission screen itself;
+                // fall back to re-querying when it is absent/invalid.
+                val fromResult: Set<String>? = try {
+                    if (result.resultCode == Activity.RESULT_OK) {
+                        permissionContract?.parseResult(result.resultCode, result.data)
+                    } else {
+                        null
+                    }
+                } catch (_: Exception) {
+                    null
+                }
+                val granted = fromResult ?: runBlocking {
                     HealthConnectReader.grantedPermissions(context)
                 }
                 val ret = JSObject()
@@ -176,6 +265,43 @@ class ReliviaHealthPlugin : Plugin() {
         call.resolve(ret)
     }
 
+    /** Current POST_NOTIFICATIONS state (always granted below Android 13). */
+    @PluginMethod
+    fun checkNotificationPermission(call: PluginCall) {
+        val ret = JSObject()
+        ret.put("granted", isNotificationGranted())
+        call.resolve(ret)
+    }
+
+    /**
+     * Requests POST_NOTIFICATIONS at runtime (Android 13+). This was the
+     * missing step that caused notifications to appear only as an in-app
+     * banner: without the runtime grant, NotificationManager.notify()
+     * throws SecurityException and the system notification never posts.
+     */
+    @PluginMethod
+    fun requestNotificationPermission(call: PluginCall) {
+        if (isNotificationGranted()) {
+            val ret = JSObject()
+            ret.put("granted", true)
+            call.resolve(ret)
+            return
+        }
+        requestPermissionForAlias(NOTIFICATION_ALIAS, call, "onNotificationPermissionResult")
+    }
+
+    @PermissionCallback
+    private fun onNotificationPermissionResult(call: PluginCall) {
+        val ret = JSObject()
+        ret.put("granted", isNotificationGranted())
+        call.resolve(ret)
+    }
+
+    private fun isNotificationGranted(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
+        return getPermissionState(NOTIFICATION_ALIAS) == PermissionState.GRANTED
+    }
+
     /** Shows the agent notification immediately (used after foreground sync). */
     @PluginMethod
     fun notifyAgent(call: PluginCall) {
@@ -184,9 +310,9 @@ class ReliviaHealthPlugin : Plugin() {
             call.reject("INVALID_ARGS", "sessionId required")
             return
         }
-        NotificationHelper.showAgentNotification(context, type, sessionId)
+        val posted = NotificationHelper.showAgentNotification(context, type, sessionId)
         val ret = JSObject()
-        ret.put("notified", true)
+        ret.put("notified", posted)
         call.resolve(ret)
     }
 

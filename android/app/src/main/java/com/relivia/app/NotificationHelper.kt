@@ -38,13 +38,24 @@ object NotificationHelper {
         }
     }
 
+    /**
+     * Posts the notification. Returns true when it was actually posted,
+     * false when notifications are disabled / permission missing — so the
+     * JS layer gets an honest result instead of assuming success.
+     */
     fun showAgentNotification(
         context: Context,
         type: String, // "agent_question" | "insight_ready"
         sessionId: String,
         notificationId: Int = type.hashCode(),
-    ) {
+    ): Boolean {
         ensureChannel(context)
+
+        // Fast path: notifications disabled at OS level (incl. missing
+        // POST_NOTIFICATIONS grant on Android 13+) — don't even attempt.
+        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+            return false
+        }
 
         val (title, body) = if (type == "agent_question") {
             "Relivia" to
@@ -84,9 +95,11 @@ object NotificationHelper {
 
         try {
             NotificationManagerCompat.from(context).notify(notificationId, notification)
+            return true
         } catch (_: SecurityException) {
-            // POST_NOTIFICATIONS not granted — skip silently (PRD §10:
-            // monitoring continues, caregiver can still open the app).
+            // POST_NOTIFICATIONS not granted — caller reports notified=false
+            // so the UI can prompt for permission instead of staying silent.
+            return false
         }
     }
 }
