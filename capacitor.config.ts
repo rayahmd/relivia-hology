@@ -19,9 +19,8 @@ const config: CapacitorConfig = {
     allowMixedContent: false,
   },
   server: {
-    // Isi saat build APK rilis, contoh:
-    // url: "https://relivia.vercel.app",
-    // cleartext: false,
+    url: "https://relivia-hology-wini.vercel.app/",
+    cleartext: false,
     androidScheme: "relivia",
   },
   plugins: {
