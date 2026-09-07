@@ -19,7 +19,7 @@ const config: CapacitorConfig = {
     allowMixedContent: false,
   },
   server: {
-    url: "https://relivia-hology-wini.vercel.app/",
+    url: "https://relivia-hology.vercel.app/",
     cleartext: false,
     androidScheme: "relivia",
   },
