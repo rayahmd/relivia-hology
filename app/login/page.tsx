@@ -6,6 +6,11 @@ import { AnimatePresence, motion } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import Logo from "@/components/Logo";
 
+// Login creates a Supabase browser client during render, which throws when
+// build-time env is absent (e.g. Vercel without env vars configured).
+// force-dynamic skips prerender so `next build` never hard-crashes on this.
+export const dynamic = "force-dynamic";
+
 export default function LoginPage() {
   const router = useRouter();
   const supabase = createClient();
