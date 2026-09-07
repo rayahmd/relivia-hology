@@ -48,6 +48,16 @@ let capacitorModule: typeof import("@capacitor/core") | null = null;
 let pluginCache: ReliviaHealthPluginApi | null = null;
 let pluginAttempted = false;
 
+/** Diagnostic logging: console only, never changes behavior or UI. */
+function dlog(...args: unknown[]): void {
+  try {
+    // eslint-disable-next-line no-console
+    console.debug("[ReliviaBridge]", ...args);
+  } catch {
+    /* logging must never break the bridge */
+  }
+}
+
 async function loadCapacitor() {
   if (capacitorModule || pluginAttempted) return capacitorModule;
   pluginAttempted = true;
@@ -62,10 +72,16 @@ async function loadCapacitor() {
 /** True when running inside the Android APK (Capacitor native). */
 export async function isNative(): Promise<boolean> {
   const cap = await loadCapacitor();
-  if (!cap) return false;
+  if (!cap) {
+    dlog("native detected: false (no @capacitor/core)");
+    return false;
+  }
   try {
-    return cap.Capacitor.isNativePlatform();
-  } catch {
+    const native = cap.Capacitor.isNativePlatform();
+    dlog("native detected:", native);
+    return native;
+  } catch (e) {
+    dlog("native detected: error", e instanceof Error ? e.message : e);
     return false;
   }
 }
@@ -83,17 +99,46 @@ export function isNativeSync(): boolean {
   }
 }
 
-async function getPlugin(): Promise<ReliviaHealthPluginApi | null> {
-  if (pluginCache) return pluginCache;
-  const cap = await loadCapacitor();
-  if (!cap || !cap.Capacitor.isNativePlatform()) return null;
-  try {
-    const { registerPlugin } = await import("@capacitor/core");
-    pluginCache = registerPlugin<ReliviaHealthPluginApi>("ReliviaHealth");
-    return pluginCache;
-  } catch {
-    return null;
+/**
+ * Initialize the native plugin proxy ONCE and report readiness as a plain
+ * boolean. The boolean (never the proxy) crosses the await boundary.
+ *
+ * WHY: Capacitor's registerPlugin() returns a Proxy whose `get` trap
+ * returns a method wrapper for ANY property — including `then`. Awaiting
+ * a promise that resolves to that proxy makes the JS engine call
+ * proxy.then(), which Capacitor translates into a native call for a
+ * method literally named "then" → "ReliviaHealth.then() is not implemented
+ * on android" (unhandled rejection) AND the outer await never settles
+ * (the wrapper ignores the resolve/reject args) → UI stuck forever.
+ */
+let pluginReady: Promise<boolean> | null = null;
+
+function ensurePlugin(): Promise<boolean> {
+  if (!pluginReady) {
+    pluginReady = (async () => {
+      const cap = await loadCapacitor();
+      if (!cap || !cap.Capacitor.isNativePlatform()) return false;
+      try {
+        const { registerPlugin } = await import("@capacitor/core");
+        pluginCache = registerPlugin<ReliviaHealthPluginApi>("ReliviaHealth");
+        dlog("plugin registered: ReliviaHealth");
+        return true;
+      } catch (e) {
+        dlog("plugin register failed:", e instanceof Error ? e.message : e);
+        return false;
+      }
+    })();
   }
+  return pluginReady;
+}
+
+/**
+ * Sync accessor for the cached proxy. NEVER await this (or any value
+ * holding the proxy) — awaiting a thenable proxy invokes its `.then`
+ * trap and hangs. Always `await ensurePlugin()` first, then call this.
+ */
+function getPlugin(): ReliviaHealthPluginApi | null {
+  return pluginCache;
 }
 
 /** Health Connect availability (PRD §9). Null on web. sdkStatus passthrough
@@ -103,12 +148,15 @@ export async function healthAvailability(): Promise<{
   available: boolean;
   sdkStatus?: number;
 } | null> {
-  const plugin = await getPlugin();
+  await ensurePlugin();
+  const plugin = getPlugin();
   if (!plugin) return null;
   try {
     const res = await withTimeout(plugin.isAvailable(), 4000, "isAvailable");
+    dlog("isAvailable result:", JSON.stringify(res));
     return { available: res.available, sdkStatus: res.sdkStatus };
-  } catch {
+  } catch (e) {
+    dlog("isAvailable error:", e instanceof Error ? e.message : e);
     return { available: false };
   }
 }
@@ -126,13 +174,25 @@ export async function requestHealthPermissions(): Promise<{
   granted: string[];
   allGranted: boolean;
 }> {
-  const plugin = await getPlugin();
-  if (!plugin) throw new Error("Monitoring health data unavailable");
+  await ensurePlugin();
+  const plugin = getPlugin();
+  if (!plugin) {
+    dlog("requestHealthPermissions: no plugin (web)");
+    throw new Error("Monitoring health data unavailable");
+  }
+  dlog("requestHealthPermissions calling native");
   const TIMEOUT_MS = 7_000;
   const timeout = new Promise<never>((_, reject) =>
     setTimeout(() => reject(new Error("PERMISSION_TIMEOUT")), TIMEOUT_MS)
   );
-  return Promise.race([plugin.requestHealthPermissions(), timeout]);
+  try {
+    const res = await Promise.race([plugin.requestHealthPermissions(), timeout]);
+    dlog("requestHealthPermissions result:", JSON.stringify(res));
+    return res;
+  } catch (e) {
+    dlog("requestHealthPermissions error:", e instanceof Error ? e.message : e);
+    throw e;
+  }
 }
 
 export type AppVersion = {
@@ -142,17 +202,29 @@ export type AppVersion = {
 
 /** APK version (null only on web — native always resolves or throws). */
 export async function getAppVersion(): Promise<AppVersion | null> {
-  const plugin = await getPlugin();
-  if (!plugin) return null;
+  await ensurePlugin();
+  const plugin = getPlugin();
+  if (!plugin) {
+    dlog("getAppVersion: no plugin (web)");
+    return null;
+  }
   if (typeof plugin.getAppVersion !== "function") {
+    dlog("getAppVersion error: BRIDGE_NO_GETAPPVERSION");
     throw new Error("BRIDGE_NO_GETAPPVERSION");
   }
-  const res = await withTimeout(plugin.getAppVersion(), 2500, "getAppVersion");
-  if (!res || typeof res.version !== "string") return null;
-  return {
-    version: res.version,
-    versionCode: typeof res.versionCode === "number" ? res.versionCode : -1,
-  };
+  dlog("getAppVersion calling native");
+  try {
+    const res = await withTimeout(plugin.getAppVersion(), 2500, "getAppVersion");
+    dlog("getAppVersion result:", JSON.stringify(res));
+    if (!res || typeof res.version !== "string") return null;
+    return {
+      version: res.version,
+      versionCode: typeof res.versionCode === "number" ? res.versionCode : -1,
+    };
+  } catch (e) {
+    dlog("getAppVersion error:", e instanceof Error ? e.message : e);
+    throw e;
+  }
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -254,7 +326,8 @@ export async function getBridgeDiagnostics(): Promise<BridgeDiagnostics> {
 
   // 2. isAvailable (2.5s timeout — hang becomes visible error).
   try {
-    const plugin = await getPlugin();
+    await ensurePlugin();
+    const plugin = getPlugin();
     if (!plugin) {
       diag.sdkError = "NO_PLUGIN_PROXY";
     } else {
@@ -283,7 +356,8 @@ export async function getBridgeDiagnostics(): Promise<BridgeDiagnostics> {
 
 /** Read recent health data. Returns null on web (caller falls back to simulation). */
 export async function readHealth(daysBack = 1): Promise<NativeHealthPoint[] | null> {
-  const plugin = await getPlugin();
+  await ensurePlugin();
+  const plugin = getPlugin();
   if (!plugin) return null;
   const res = await plugin.readHealth({ daysBack });
   return res.data ?? [];
@@ -295,7 +369,8 @@ export async function enableBackgroundSync(opts: {
   patientId: string;
   token: string;
 }): Promise<boolean> {
-  const plugin = await getPlugin();
+  await ensurePlugin();
+  const plugin = getPlugin();
   if (!plugin) return false;
   try {
     const res = await plugin.enableBackgroundSync(opts);
@@ -306,7 +381,8 @@ export async function enableBackgroundSync(opts: {
 }
 
 export async function disableBackgroundSync(): Promise<void> {
-  const plugin = await getPlugin();
+  await ensurePlugin();
+  const plugin = getPlugin();
   if (!plugin) return;
   try {
     await plugin.disableBackgroundSync();
@@ -326,7 +402,8 @@ export async function disableBackgroundSync(): Promise<void> {
  * agent question itself.
  */
 export async function notifyAgent(opts: { type: string; sessionId: string }): Promise<boolean> {
-  const plugin = await getPlugin();
+  await ensurePlugin();
+  const plugin = getPlugin();
   if (plugin) {
     return notifyAgentNative(opts.type, opts.sessionId);
   }
@@ -416,7 +493,8 @@ export async function notifyAgentNative(type: string, sessionId: string): Promis
 }
 
 export async function openHealthSettings(): Promise<void> {
-  const plugin = await getPlugin();
+  await ensurePlugin();
+  const plugin = getPlugin();
   if (!plugin) return;
   try {
     await plugin.openHealthSettings();
@@ -427,7 +505,8 @@ export async function openHealthSettings(): Promise<void> {
 
 /** Open the app's OS notification settings screen (manual fallback). */
 export async function openNotificationSettings(): Promise<void> {
-  const plugin = await getPlugin();
+  await ensurePlugin();
+  const plugin = getPlugin();
   if (!plugin) return;
   try {
     await plugin.openNotificationSettings();
@@ -442,12 +521,16 @@ export async function openNotificationSettings(): Promise<void> {
  * pre-13 devices where no runtime grant is needed). Null plugin → false.
  */
 export async function checkNotificationPermission(): Promise<boolean> {
-  const plugin = await getPlugin();
+  await ensurePlugin();
+  const plugin = getPlugin();
   if (!plugin) return false;
   try {
-    const res = await plugin.checkNotificationPermission();
+    dlog("checkNotificationPermission calling native");
+    const res = await withTimeout(plugin.checkNotificationPermission(), 4000, "checkNotificationPermission");
+    dlog("checkNotificationPermission result:", JSON.stringify(res));
     return res.granted;
-  } catch {
+  } catch (e) {
+    dlog("checkNotificationPermission error:", e instanceof Error ? e.message : e);
     return false;
   }
 }
@@ -456,26 +539,41 @@ export async function checkNotificationPermission(): Promise<boolean> {
 export async function requestNotificationPermission(): Promise<boolean> {
   const ask = async (): Promise<boolean> => {
     // 1. Try custom plugin first for direct Android permission request
-    const plugin = await getPlugin();
+    await ensurePlugin();
+    const plugin = getPlugin();
     if (plugin) {
       try {
-        const res = await plugin.requestNotificationPermission();
+        dlog("requestNotificationPermission calling native");
+        const res = await withTimeout(plugin.requestNotificationPermission(), 30000, "requestNotificationPermission");
+        dlog("requestNotificationPermission result:", JSON.stringify(res));
         if (res.granted) return true;
-      } catch {
+      } catch (e) {
+        dlog("requestNotificationPermission error:", e instanceof Error ? e.message : e);
         /* fallback */
       }
     }
     // 2. Try official Capacitor LocalNotifications plugin request
     try {
+      dlog("requestNotificationPermission: trying LocalNotifications fallback");
       const { LocalNotifications } = await import("@capacitor/local-notifications");
       const status = await LocalNotifications.requestPermissions();
+      dlog("requestNotificationPermission fallback result:", JSON.stringify(status));
       return status.display === "granted";
-    } catch {
+    } catch (e) {
+      dlog("requestNotificationPermission fallback error:", e instanceof Error ? e.message : e);
       return false;
     }
   };
 
-  const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3_000));
+  // Generous ceiling: the caregiver needs time to read and answer the OS
+  // dialog. (A short cutoff here used to silently report "denied" while the
+  // dialog was still open — one cause of the unreliable permission flow.)
+  const timeout = new Promise<boolean>((resolve) =>
+    setTimeout(() => {
+      dlog("requestNotificationPermission: outer timeout, reporting false");
+      resolve(false);
+    }, 65_000)
+  );
   return Promise.race([ask(), timeout]);
 }
 
