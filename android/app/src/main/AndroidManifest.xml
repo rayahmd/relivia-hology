@@ -32,6 +32,20 @@
                 <data android:scheme="relivia" android:host="agent" />
             </intent-filter>
 
+            <!-- OAuth callback deep link: relivia://auth/callback?code=...
+                 Google sign-in inside the APK runs in a Custom Tab
+                 (@capacitor/browser). Supabase redirects to this scheme so
+                 Android routes back to MainActivity (singleTask) and the
+                 Capacitor App plugin emits appUrlOpen — the WebView then
+                 exchanges the code for a session. Without this filter the
+                 callback lands in Chrome and the APK never gets a session. -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="relivia" android:host="auth" android:pathPrefix="/callback" />
+            </intent-filter>
+
             <!-- Health Connect permission rationale filter (Android 14+ & Health Connect) -->
             <intent-filter>
                 <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
