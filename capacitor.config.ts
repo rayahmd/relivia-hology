@@ -21,7 +21,11 @@ const config: CapacitorConfig = {
   server: {
     url: "https://relivia-hology.vercel.app/",
     cleartext: false,
-    androidScheme: "relivia",
+    // NOTE: jangan set androidScheme ke "relivia" — scheme itu dipakai untuk
+    // deep link OAuth (relivia://auth/callback, lihat AndroidManifest).
+    // Kalau WebView sendiri memakai scheme yang sama, OS/WebView bisa
+    // salah route callback dan sesi tidak pernah kembali ke APK.
+    // Default Capacitor (https) sudah benar untuk pola server.url ini.
   },
   plugins: {
     LocalNotifications: {

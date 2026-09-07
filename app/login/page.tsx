@@ -44,6 +44,27 @@ export default function LoginPage() {
   async function handleGoogleSignIn() {
     setGoogleLoading(true);
     setError(null);
+    // Inside the APK: OAuth must NOT redirect the WebView (Android would
+    // hand supabase.co/google.com to Chrome and the callback would land
+    // there, never returning a session to the app). Instead open the
+    // Supabase OAuth URL in a Custom Tab and come back via the
+    // relivia://auth/callback deep link — see lib/nativeAuth.ts.
+    try {
+      const { isNativeSync, markNativeFlag, startNativeGoogleSignIn } = await import("@/lib/nativeAuth");
+      if (isNativeSync()) {
+        markNativeFlag();
+        const res = await startNativeGoogleSignIn(supabase);
+        if (res && !res.ok) {
+          setError(res.error);
+          setGoogleLoading(false);
+        }
+        // res === null → Custom Tab opened, completion arrives through the
+        // appUrlOpen listener installed below. Keep the spinner on.
+        return;
+      }
+    } catch {
+      // Native helper failed to load — fall through to the web flow.
+    }
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: `${window.location.origin}/auth/callback` },
@@ -85,11 +106,61 @@ export default function LoginPage() {
     if (params.get("provider") === "google") {
       handleGoogleSignIn();
     }
-    if (params.get("error") === "auth_failed") {
-      setError("Login Google gagal — sesi tidak terbentuk. Coba lagi.");
+    // Tampilkan alasan asli dari Supabase/Google bila ada (mis. redirect URL
+    // belum allow-list, consent dibatalkan), bukan cuma pesan generik.
+    const oauthDesc = params.get("error_description");
+    if (params.get("error") === "auth_failed" || params.get("error") === "oauth") {
+      setError(
+        oauthDesc
+          ? `Login Google gagal: ${decodeURIComponent(oauthDesc.replace(/\+/g, " "))}`
+          : "Login Google gagal — sesi tidak terbentuk. Coba lagi."
+      );
     }
 
-    return () => subscription.unsubscribe();
+    // APK only: listen for the OAuth deep-link callback
+    // (relivia://auth/callback?code=...) emitted by the Capacitor App
+    // plugin after the Custom Tab finishes. Exchanges the code for a
+    // session in this WebView and navigates to /dashboard.
+    let cleanupNativeAuth: (() => void) | undefined;
+    (async () => {
+      try {
+        const { isNativeSync, markNativeFlag, listenNativeAuthCallback } = await import("@/lib/nativeAuth");
+        if (!isNativeSync()) return;
+        markNativeFlag();
+        cleanupNativeAuth = await listenNativeAuthCallback(supabase, {
+          onSuccess: () => {
+            setGoogleLoading(false);
+            router.replace("/dashboard");
+            router.refresh();
+          },
+          onError: (message) => {
+            setError(message);
+            setGoogleLoading(false);
+          },
+          onCancel: () => {
+            // Custom Tab closed without a session (user pressed back) —
+            // stop the spinner so they can retry.
+            supabase.auth
+              .getSession()
+              .then(({ data: { session } }) => {
+                if (!session) setGoogleLoading(false);
+              })
+              .catch(() => setGoogleLoading(false));
+          },
+        });
+      } catch {
+        /* native listener unavailable — web flow unaffected */
+      }
+    })();
+
+    return () => {
+      subscription.unsubscribe();
+      try {
+        cleanupNativeAuth?.();
+      } catch {
+        /* ignore */
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

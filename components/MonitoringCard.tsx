@@ -211,7 +211,7 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
         alt=""
         width={180}
         height={180}
-        className="absolute -right-6 -top-6 opacity-15 pointer-events-none select-none"
+        className="absolute -right-6 pointer-events-none select-none"
       />
 
       {/* Konten asli, dikasih z-10 biar di atas watermark */}
