@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Capacitor } from "@capacitor/core";
 import LandingNavbar from "@/components/landing/LandingNavbar";
@@ -14,8 +14,31 @@ import FAQ from "@/components/landing/FAQ";
 import FinalCTA from "@/components/landing/FinalCTA";
 import Footer from "@/components/landing/Footer";
 
+const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
+
 export default function LandingPage() {
   const router = useRouter();
+  const [isNative, setIsNative] = useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        return Capacitor.isNativePlatform();
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  });
+
+  useIsomorphicLayoutEffect(() => {
+    try {
+      if (Capacitor.isNativePlatform()) {
+        setIsNative(true);
+        window.location.replace("/login");
+      }
+    } catch {
+      // Fallback
+    }
+  }, []);
 
   // Safety net: if Supabase ever redirects the OAuth code to the Site URL
   // (root) instead of /auth/callback, forward it so the session exchange
@@ -24,17 +47,12 @@ export default function LandingPage() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("code")) {
       window.location.replace(`/auth/callback?${params.toString()}`);
-      return;
     }
+  }, []);
 
-    try {
-      if (typeof window !== "undefined" && Capacitor.isNativePlatform()) {
-        router.replace("/login");
-      }
-    } catch {
-      // Fallback in case Capacitor API is unavailable
-    }
-  }, [router]);
+  if (isNative) {
+    return <div className="min-h-screen bg-[#2D1B69]" />;
+  }
 
   return (
     <main className="font-sans min-h-screen bg-bg text-ink">
