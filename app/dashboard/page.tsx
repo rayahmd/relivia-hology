@@ -5,7 +5,8 @@ import MonitoringChart from "@/components/MonitoringChart";
 import Calendar from "@/components/Calendar";
 import Link from "next/link";
 import type { DailyCheckin } from "@/lib/types";
-import { IconPill, IconFlame, IconAlertTriangle, IconSparkle } from "@/components/Icons";
+import { IconSparkle } from "@/components/Icons";
+import Image from "next/image";
 
 export const dynamic = "force-dynamic";
 
@@ -87,196 +88,231 @@ export default async function DashboardPage() {
   else if (hasChanges) changeStatus = "change_detected";
 
   const STATUS_CONFIG = {
-    normal: { label: "Tidak ada perubahan signifikan", color: "bg-green-tint text-green-deep", dot: "bg-green" },
-    change_detected: { label: "Perubahan terdeteksi", color: "bg-amber-tint text-amber-deep", dot: "bg-amber" },
-    investigating: { label: "Agent sedang menginvestigasi", color: "bg-primary-light text-primary-dark", dot: "bg-primary animate-pulse" },
-    insight_ready: { label: "Insight siap ditinjau", color: "bg-green-tint text-green-deep", dot: "bg-green" },
+    normal: { label: "Tidak ada perubahan signifikan", badgeBg: "bg-[#D1FAE5] border-[#A7F3D0] text-[#065F46]", dot: "bg-[#10B981]" },
+    change_detected: { label: "Perubahan terdeteksi", badgeBg: "bg-[#FEF3C7] border-[#FDE68A] text-[#92400E]", dot: "bg-[#F59E0B]" },
+    investigating: { label: "Agent sedang menginvestigasi", badgeBg: "bg-[#E0E7FF] border-[#C7D2FE] text-[#3730A3]", dot: "bg-[#6366F1] animate-pulse" },
+    insight_ready: { label: "Insight siap ditinjau", badgeBg: "bg-[#D1FAE5] border-[#A7F3D0] text-[#065F46]", dot: "bg-[#10B981]" },
   };
   const statusCfg = STATUS_CONFIG[changeStatus];
 
-  return (
-    <div className="min-h-screen flex flex-col">
-      <TopNav patientName={patient.name} patientAge={patient.age} />
-      <div className="flex-1 px-4 md:px-[5vw] py-8 max-w-[1180px] mx-auto w-full">
+  // Dynamic time greeting
+  const hour = new Date().getHours();
+  let timeGreeting = "Good Morning,";
+  if (hour >= 12 && hour < 17) timeGreeting = "Good Afternoon,";
+  else if (hour >= 17) timeGreeting = "Good Evening,";
 
-        {/* Header */}
-        <div className="flex items-end justify-between gap-4 flex-wrap mb-6">
-          <div>
-            <h2 className="text-2xl font-extrabold mb-1">Halo 👋</h2>
-            <p className="text-sm text-soft">Ini gambaran {checkins.length} hari terakhir pemantauan {patient.name}.</p>
-          </div>
+  return (
+    <div className="min-h-screen flex flex-col bg-[#FAF8FF]">
+      <TopNav patientName={patient.name} patientAge={patient.age} />
+
+      <div className="flex-1 px-4 sm:px-6 md:px-8 py-6 max-w-[540px] md:max-w-[760px] lg:max-w-[960px] mx-auto w-full space-y-4">
+
+        {/* Header Greeting */}
+        <div className="pt-2 pb-1">
+          <p className="text-sm font-bold text-[#8B5CF6] tracking-tight">{timeGreeting}</p>
+          <h1 className="text-3xl sm:text-4xl font-extrabold text-[#7C3AED] tracking-tight mt-0.5">
+            {patient.name}
+          </h1>
         </div>
 
-        {/* Patient Card + Change Status */}
-        <div className="grid sm:grid-cols-2 gap-4 mb-5">
-          {/* Patient Card */}
-          <div className="card flex items-center gap-4 px-5 py-5">
-            <div className="w-12 h-12 rounded-full bg-primary text-white flex items-center justify-center font-extrabold text-lg flex-none">
+        {/* Patient Profile & Check-in Card */}
+        <div className="bg-white rounded-3xl p-4 sm:p-5 border border-purple-100 shadow-sm flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-[#8B5CF6] to-[#C4B5FD] text-white flex items-center justify-center font-extrabold text-xl flex-none ring-2 ring-purple-100 shadow-sm overflow-hidden">
               {patient.name.charAt(0)}
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="font-extrabold truncate">{patient.name}</div>
-              {patient.age && <div className="text-xs text-soft">{patient.age} tahun</div>}
-              <div className="text-[11px] text-faint mt-0.5">
-                {todayCheckin ? `Check-in hari ini: ${today}` : "Belum check-in hari ini"}
-              </div>
+            <div className="min-w-0">
+              <h2 className="font-extrabold text-[#7C3AED] text-base sm:text-lg truncate leading-tight">
+                {patient.name}
+              </h2>
+              {patient.age && (
+                <p className="text-xs text-gray-500 font-medium">{patient.age} tahun</p>
+              )}
+              <p className="text-[11px] text-gray-400 font-medium mt-0.5">
+                {todayCheckin ? "Sudah Check-In Hari Ini" : "Belum Check - In Hari Ini"}
+              </p>
             </div>
-            <Link href="/checkin" className="text-xs font-bold text-primary hover:underline flex-none">
-              {todayCheckin ? "Edit" : "Check-in"}
-            </Link>
+          </div>
+          <Link
+            href="/checkin"
+            className="text-sm sm:text-base font-extrabold text-[#7C3AED] hover:text-[#6D28D9] hover:underline flex-none transition"
+          >
+            Check - In
+          </Link>
+        </div>
+
+        {/* Status Pemantauan Card */}
+        <div className="bg-white rounded-3xl p-4 sm:p-5 border border-gray-100 shadow-sm">
+          <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block mb-2.5">
+            STATUS PEMANTAUAN
+          </span>
+          <div className={`inline-flex items-center gap-2.5 px-4 py-2 rounded-full font-bold text-xs sm:text-sm border ${statusCfg.badgeBg}`}>
+            <span className={`w-2.5 h-2.5 rounded-full ${statusCfg.dot}`} />
+            <span>{statusCfg.label}</span>
           </div>
 
-          {/* Change Status */}
-          <div className="card px-5 py-5 flex flex-col justify-between">
-            <div className="text-xs font-bold text-faint uppercase tracking-wide mb-3">Status Pemantauan</div>
-            <div className={`inline-flex items-center gap-2 self-start px-3.5 py-2 rounded-full font-bold text-sm mb-4 ${statusCfg.color}`}>
-              <span className={`w-2 h-2 rounded-full ${statusCfg.dot}`} />
-              {statusCfg.label}
-            </div>
-            {changeStatus === "change_detected" && (
-              <Link href="/agent" className="btn-primary text-sm py-2.5 text-center rounded-xl">
+          {changeStatus === "change_detected" && (
+            <div className="mt-3">
+              <Link href="/agent" className="text-xs font-bold text-[#7C3AED] hover:underline">
                 Lihat Status Monitoring →
               </Link>
-            )}
-            {changeStatus === "investigating" && (
-              <Link href="/agent" className="btn-primary text-sm py-2.5 text-center rounded-xl">
+            </div>
+          )}
+          {changeStatus === "investigating" && (
+            <div className="mt-3">
+              <Link href="/agent" className="text-xs font-bold text-[#7C3AED] hover:underline">
                 Lihat Investigasi →
               </Link>
-            )}
-            {changeStatus === "insight_ready" && (
-              <Link href="/insight" className="text-sm font-bold text-green-deep hover:underline">
+            </div>
+          )}
+          {changeStatus === "insight_ready" && (
+            <div className="mt-3">
+              <Link href="/insight" className="text-xs font-bold text-[#059669] hover:underline">
                 Lihat Insight →
               </Link>
-            )}
-          </div>
-        </div>
-
-        {/* Today's Health Overview */}
-        {(todayHealth ?? []).length > 0 && (
-          <div className="card mb-5">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-              <h3 className="font-extrabold text-base">Data Kesehatan Hari Ini</h3>
-              <Link href="/health" className="text-xs font-semibold text-primary hover:underline">Lihat semua →</Link>
             </div>
-            <div className="grid sm:grid-cols-3 gap-0 divide-y sm:divide-y-0 sm:divide-x divide-border">
-              {(["sleep_hours", "steps", "heart_rate"] as const).map((metric) => {
-                const d = healthMap[metric];
-                const baseline = baselineMap[metric];
-                const labels: Record<string, { name: string; icon: string; unit: string }> = {
-                  sleep_hours: { name: "Tidur", icon: "🌙", unit: "jam" },
-                  steps: { name: "Langkah", icon: "🏃", unit: "langkah" },
-                  heart_rate: { name: "Detak Jantung", icon: "❤️", unit: "bpm" },
-                };
-                const cfg = labels[metric];
-                let changePercent: number | null = null;
-                if (d && baseline) changePercent = Math.round(((d.value - baseline) / baseline) * 1000) / 10;
-                const isDown = (changePercent ?? 0) < -14;
-
-                return (
-                  <div key={metric} className="px-5 py-4">
-                    <div className="text-xs text-soft font-medium mb-1">{cfg.icon} {cfg.name}</div>
-                    <div className="text-xl font-extrabold">
-                      {d ? `${d.value} ${cfg.unit}` : <span className="text-faint text-base">—</span>}
-                    </div>
-                    {changePercent !== null && Math.abs(changePercent) >= 15 && (
-                      <div className={`text-[11px] font-bold mt-0.5 ${isDown ? "text-red-deep" : "text-amber-deep"}`}>
-                        {isDown ? "▼" : "▲"} {Math.abs(changePercent)}% dari baseline
-                      </div>
-                    )}
-                    {changePercent !== null && Math.abs(changePercent) < 15 && (
-                      <div className="text-[11px] text-faint mt-0.5">Dalam rentang normal</div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Stats */}
-        <div className="grid sm:grid-cols-3 gap-4 mb-6">
-          <StatCard icon={<IconPill size={20} />} iconBg="bg-primary-light" iconColor="text-primary" value={`${adherence}%`} label="Kepatuhan obat 7 hari" />
-          <StatCard icon={<IconFlame size={20} />} iconBg="bg-green-tint" iconColor="text-green" value={String(checkins.length)} label="Hari tercatat" />
-          <StatCard icon={<IconAlertTriangle size={20} />} iconBg="bg-amber-tint" iconColor="text-amber-deep" value={String(flagCount)} label="Hari ditandai berubah" />
-        </div>
-
-        {/* CTA Buttons */}
-        <div className="flex flex-wrap gap-3 mb-6">
-          <Link href="/checkin" className="btn-primary text-sm">📝 Catatan Harian</Link>
-          <Link href="/health" className="text-sm font-semibold px-5 py-3 rounded-full border-2 border-border hover:border-primary/40 transition">📊 Data Kesehatan</Link>
-          {latestInsight && (
-            <Link href="/insight" className="text-sm font-semibold px-5 py-3 rounded-full border-2 border-green/40 bg-green-tint text-green-deep hover:border-green transition">
-              <IconSparkle size={14} className="inline mr-1" /> Lihat Insight
-            </Link>
           )}
         </div>
 
-        {/* Chart */}
-        <div className="card mb-5">
-          <div className="flex flex-wrap items-center justify-between gap-2 px-4 sm:px-6 py-5 border-b border-border">
-            <h3 className="font-extrabold text-base">Grafik Pemantauan</h3>
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-soft font-medium">
-              <span className="flex items-center gap-1.5"><i className="w-2.5 h-0.5 bg-primary inline-block" /> Mood</span>
-              <span className="flex items-center gap-1.5"><i className="w-2.5 h-0.5 bg-amber inline-block" /> Tidur</span>
-              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-green inline-block" /> Obat diminum</span>
-              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-red inline-block" /> Terlewat</span>
+        {/* 3 Pastel Gradient Stat Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+          {/* Card 1: Medication Adherence */}
+          <div className="bg-gradient-to-br from-[#FFF4BF] to-[#FFBEFB] rounded-3xl p-4 sm:p-5 relative overflow-hidden shadow-sm">
+
+            {/* Icon jadi layer background, absolute + z-0 */}
+            <div className="absolute left-0 bottom-0 z-0 opacity-90">
+              <Image src="/images/icons/medicine-box.svg" alt="" width={120} height={120} />
+            </div>
+
+            {/* Teks jadi layer depan, z-10, dikasih padding kiri biar ga nabrak icon */}
+            <div className="relative z-10 pl-24">
+              <div className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">{adherence}%</div>
+              <div className="text-xs text-gray-600 font-medium leading-tight">Kepatuhan obat 7 hari</div>
             </div>
           </div>
-          <MonitoringChart checkins={checkins} />
+          {/* Card 2: Days Recorded */}
+          <div className="bg-gradient-to-br from-[#FFF4BF] to-[#FFBEFB] rounded-3xl p-4 sm:p-5 relative overflow-hidden shadow-sm">
+
+            {/* Icon jadi layer background, absolute + z-0 */}
+            <div className="absolute left-0 bottom-0 z-0 opacity-90">
+              <Image src="/images/icons/tabler_comet.svg" alt="" width={140} height={140} />
+            </div>
+
+            {/* Teks jadi layer depan, z-10, dikasih padding kiri biar ga nabrak icon */}
+            <div className="relative z-10 pl-24">
+              <div className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">{checkins.length}</div>
+              <div className="text-xs text-gray-600 font-medium leading-tight">Hari tercatat</div>
+            </div>
+          </div>
+
+          {/* Card 3: Days Flagged */}
+          <div className="bg-gradient-to-br from-[#FFF4BF] to-[#FFBEFB] rounded-3xl p-4 sm:p-5 relative overflow-hidden shadow-sm">
+
+            {/* Icon jadi layer background, absolute + z-0 */}
+            <div className="absolute left-0 bottom-0 z-0 opacity-90">
+              <Image src="/images/icons/warning.svg" alt="" width={140} height={140} />
+            </div>
+
+            {/* Teks jadi layer depan, z-10, dikasih padding kiri biar ga nabrak icon */}
+            <div className="relative z-10 pl-24">
+              <div className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">{flagCount}</div>
+              <div className="text-xs text-gray-600 font-medium leading-tight">Hari ditandai berubah</div>
+            </div>
+          </div>
         </div>
 
-        {/* Calendar */}
-        <div className="card mb-5">
-          <div className="flex items-center justify-between px-4 sm:px-6 py-5 border-b border-border">
-            <h3 className="font-extrabold text-base">Kalender Pencatatan</h3>
-            <span className="text-xs text-faint font-medium hidden sm:block">Klik tanggal untuk lompat ke catatannya</span>
+        {/* CTA Pills */}
+        <div className="flex flex-wrap justify-center gap-3 pt-1 pb-1">
+          <Link
+            href="/checkin"
+            className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white font-extrabold rounded-full px-6 py-3 text-sm shadow-md transition-all active:scale-95"
+          >
+            Catatan Harian
+          </Link>
+          <Link
+            href="/health"
+            className="bg-[#E9D5FF] hover:bg-[#DDD6FE] text-[#7C3AED] font-extrabold rounded-full px-6 py-3 text-sm transition-all active:scale-95"
+          >
+            Data Kesehatan
+          </Link>
+        </div>
+
+        {/* Grafik Pemantauan Card */}
+        <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="p-4 sm:p-5 border-b border-gray-100">
+            <h3 className="font-extrabold text-base text-gray-900 mb-2">Grafik Pemantauan</h3>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-gray-600 font-semibold">
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-1 bg-[#8B5CF6] rounded-full inline-block" /> Mood
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-1 bg-[#F97316] rounded-full inline-block" /> Tidur
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-sm bg-[#10B981] inline-block" /> Obat Diminum
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-sm bg-[#EF4444] inline-block" /> Terlewat
+              </span>
+            </div>
+          </div>
+          <div className="py-2">
+            <MonitoringChart checkins={checkins} />
+          </div>
+        </div>
+
+        {/* Kalender Pencatatan Card */}
+        <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="p-4 sm:p-5 border-b border-gray-100">
+            <h3 className="font-extrabold text-base text-gray-900">Kalender Pencatatan</h3>
           </div>
           <Calendar checkins={checkins} />
         </div>
 
-        {/* Log */}
-        <div className="card">
-          <div className="px-4 sm:px-6 py-5 border-b border-border">
-            <h3 className="font-extrabold text-base">Log Harian</h3>
+        {/* Log Harian Card */}
+        <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="p-4 sm:p-5 border-b border-gray-100">
+            <h3 className="font-extrabold text-base text-gray-900">Log Harian</h3>
           </div>
-          <ul>
-            {checkins.length === 0 && (
-              <li className="px-4 sm:px-6 py-8 text-sm text-soft text-center">Belum ada catatan harian.</li>
+          <div>
+            {checkins.length === 0 ? (
+              <div className="p-6 text-center text-xs sm:text-sm text-gray-500 font-medium leading-relaxed">
+                Belum ada catatan harian yang tersimpan. Klik "Catatan Harian" di atas untuk menambah data baru.
+              </div>
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {checkins.slice().reverse().map((c) => (
+                  <li
+                    key={c.id}
+                    id={`log-${c.checkin_date}`}
+                    className="p-4 sm:p-5 flex items-start justify-between gap-3 hover:bg-purple-50/40 transition"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-extrabold text-gray-900">{c.checkin_date}</span>
+                        {c.behavior_change_flag && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700">
+                            berubah dari pola
+                          </span>
+                        )}
+                        {!c.medication_taken && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700">
+                            obat terlewat
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs sm:text-sm text-gray-600 leading-relaxed font-medium">
+                        {c.free_text_note || "Tidak ada catatan tambahan."}
+                      </p>
+                    </div>
+                    <div className={`w-2.5 h-2.5 rounded-full mt-1.5 flex-none ${c.medication_taken ? "bg-[#10B981]" : "bg-[#EF4444]"}`} />
+                  </li>
+                ))}
+              </ul>
             )}
-            {checkins.slice().reverse().map((c) => (
-              <li key={c.id} id={`log-${c.checkin_date}`} className="grid grid-cols-[70px_1fr_auto] sm:grid-cols-[82px_1fr_auto] gap-3 px-4 sm:px-6 py-3.5 border-t border-border/60 first:border-t-0 items-start">
-                <div className="text-xs text-faint font-bold pt-0.5">{c.checkin_date}</div>
-                <div className="text-sm leading-relaxed">
-                  <div className="flex gap-1.5 mb-1 flex-wrap">
-                    {c.behavior_change_flag && (
-                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-red-tint text-red-deep">berubah dari pola</span>
-                    )}
-                    {!c.medication_taken && (
-                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-red-tint text-red-deep">obat terlewat</span>
-                    )}
-                    {c.behavior_change && (
-                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-tint text-amber-deep">perubahan perilaku</span>
-                    )}
-                  </div>
-                  {c.free_text_note}
-                </div>
-                <div className={`w-2 h-2 rounded-full mt-1.5 ${c.medication_taken ? "bg-green" : "bg-red"}`} />
-              </li>
-            ))}
-          </ul>
+          </div>
         </div>
-      </div>
-    </div>
-  );
-}
 
-function StatCard({ icon, iconBg, iconColor, value, label }: { icon: React.ReactNode; iconBg: string; iconColor: string; value: string; label: string }) {
-  return (
-    <div className="card flex items-center gap-4 px-5 py-5">
-      <div className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-none ${iconBg} ${iconColor}`}>{icon}</div>
-      <div>
-        <div className="text-2xl font-extrabold tracking-tight">{value}</div>
-        <div className="text-xs text-soft font-medium">{label}</div>
       </div>
     </div>
   );

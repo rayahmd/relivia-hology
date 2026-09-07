@@ -1,31 +1,28 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import { useAutoMonitor } from "@/components/AutoMonitorProvider";
 import {
   backendBaseUrl,
   enableBackgroundSync,
   getAppVersion,
-  getBridgeDiagnostics,
   healthAvailability,
   isNative,
   openHealthSettings,
-  openNotificationSettings,
   requestHealthPermissions,
   requestNotificationPermission,
-  type BridgeDiagnostics,
 } from "@/lib/nativeBridge";
 
 /**
- * Monitoring onboarding card (PRD §10):
+ * Kartu aktivasi monitoring otomatis:
  *
- *   Connect Health Data → Health Connect permission →
- *   Notification permission → Background sync → Monitoring Active
+ *   Hubungkan Data Kesehatan → izin akses → izin notifikasi →
+ *   sinkronisasi background → Monitoring Aktif
  *
- * If Health Connect is unavailable the card reports
- * "Monitoring health data unavailable" — caregiver check-in and all other
- * features keep working (graceful degradation).
+ * Jika data kesehatan tidak tersedia, check-in harian dan fitur lain
+ * tetap berfungsi normal.
  */
 export default function MonitoringCard({ patientId }: { patientId: string }) {
   const { monitoringActive, setMonitoringActive } = useAutoMonitor();
@@ -36,15 +33,6 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
   const [message, setMessage] = useState<string | null>(null);
   const [showSettingsFallback, setShowSettingsFallback] = useState(false);
   const [appVersion, setAppVersion] = useState<string | null>(null);
-  const [appVersionCode, setAppVersionCode] = useState<number | null>(null);
-  const [appVersionError, setAppVersionError] = useState<string | null>(null);
-  const [diag, setDiag] = useState<BridgeDiagnostics | null>(null);
-
-  // Web build marker — bump when this file's flow changes so a mismatch
-  // between installed APK and deployed web is visible at a glance.
-  // Compare with the native "build" number below; both are informational
-  // markers, neither is authoritative over the other.
-  const WEB_BUILD = "2026-09-06h";
 
   useEffect(() => {
     let cancelled = false;
@@ -53,8 +41,8 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
       if (cancelled) return;
       setNative(n);
       if (n) {
-        // Run health availability, app version, and diagnostics concurrently so
-        // one slow/hanging call does not delay the others.
+        // Cek ketersediaan layanan kesehatan dan versi aplikasi secara
+        // bersamaan agar satu panggilan yang lambat tidak menghambat lainnya.
         await Promise.allSettled([
           (async () => {
             try {
@@ -70,25 +58,9 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
           (async () => {
             try {
               const v = await getAppVersion();
-              if (!cancelled) {
-                setAppVersion(v?.version ?? null);
-                setAppVersionCode(v?.versionCode ?? null);
-                setAppVersionError(v ? null : "NULL_VERSION");
-              }
-            } catch (e) {
-              if (!cancelled) {
-                setAppVersion(null);
-                setAppVersionCode(null);
-                setAppVersionError(e instanceof Error ? e.message : String(e));
-              }
-            }
-          })(),
-          (async () => {
-            try {
-              const d = await getBridgeDiagnostics();
-              if (!cancelled) setDiag(d);
+              if (!cancelled) setAppVersion(v?.version ?? null);
             } catch {
-              /* diagnostics must never break the card */
+              if (!cancelled) setAppVersion(null);
             }
           })(),
         ]);
@@ -99,20 +71,20 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
     };
   }, []);
 
-  /** Map native rejection messages to actionable Indonesian guidance. */
+  /** Petakan pesan error teknis menjadi panduan yang mudah dipahami. */
   function healthErrorMessage(e: unknown): string {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes("PERMISSION_TIMEOUT")) {
-      return "Layar izin Health Connect tidak memberi respons. Tutup layar izin bila masih terbuka, lalu tekan Connect lagi — atau aktifkan izin manual lewat tombol Pengaturan di bawah.";
+      return "Layar izin akses kesehatan tidak memberi respons. Tutup layar izin bila masih terbuka, lalu tekan Hubungkan lagi — atau aktifkan izin manual lewat tombol Pengaturan di bawah.";
     }
     if (msg.includes("needs an update")) {
-      return "Aplikasi Health Connect perlu diupdate dari Play Store, lalu coba lagi.";
+      return "Aplikasi pendamping kesehatan perlu diperbarui dari Play Store, lalu coba lagi.";
     }
     if (msg.includes("not available on this device") || msg === "Monitoring health data unavailable") {
-      return "Monitoring health data unavailable — pastikan aplikasi Health Connect terinstall (Android 13 ke bawah wajib install dari Play Store, Android 14+ bawaan). Check-in harian tetap berfungsi.";
+      return "Data kesehatan belum tersedia — pastikan aplikasi pendamping kesehatan sudah terpasang dan memiliki data. Check-in harian tetap berfungsi normal.";
     }
     if (msg.includes("Could not open")) {
-      return "Layar izin Health Connect tidak bisa dibuka otomatis. Buka Pengaturan manual lewat tombol di bawah, aktifkan izin baca Tidur/Langkah/Detak jantung untuk Relivia.";
+      return "Layar izin tidak bisa dibuka otomatis. Buka Pengaturan manual lewat tombol di bawah, lalu aktifkan izin baca Tidur, Langkah, dan Detak Jantung untuk Relivia.";
     }
     return `Gagal mengaktifkan monitoring: ${msg}`;
   }
@@ -151,11 +123,11 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
       const onNative = await isNative();
 
       if (onNative) {
-        // Request Android 13+ notification permission FIRST so system notifications work
-        // regardless of Health Connect outcome
+        // Minta izin notifikasi terlebih dahulu agar notifikasi sistem
+        // tetap berfungsi apa pun hasil koneksi data kesehatan.
         const notifGranted = await requestNotificationPermission();
 
-        // 1. Health Connect permission (explicit, PRD §10)
+        // 1. Minta izin akses data kesehatan.
         let perm;
         try {
           perm = await requestHealthPermissions();
@@ -166,14 +138,13 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
         if (!perm.allGranted) {
           setShowSettingsFallback(true);
           setMessage(
-            `Izin Health Connect belum lengkap. Buka Pengaturan, aktifkan semua izin baca untuk Relivia, lalu tekan Connect lagi.${
-              !notifGranted ? " (Izin notifikasi sistem HP juga belum diaktifkan)." : ""
+            `Izin akses data kesehatan belum lengkap. Buka Pengaturan, aktifkan semua izin baca untuk Relivia, lalu tekan Hubungkan lagi.${
+              !notifGranted ? " (Izin notifikasi sistem juga belum diaktifkan.)" : ""
             }`
           );
           return;
         }
-        // 3. Schedule background worker with the caregiver's session token
-        //    (worker authenticates via Authorization: Bearer, PRD §11).
+        // 2. Jadwalkan sinkronisasi background dengan token sesi caregiver.
         const supabase = createClient();
         const { data } = await supabase.auth.getSession();
         const token = data.session?.access_token;
@@ -183,31 +154,31 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
           patientId,
           token,
         });
-        if (!scheduled) throw new Error("Gagal menjadwalkan background sync.");
+        if (!scheduled) throw new Error("Gagal menjadwalkan sinkronisasi otomatis.");
         setMonitoringActive(true);
-        // 4. Prove system notifications work right away.
+        // 3. Kirim satu notifikasi konfirmasi sebagai bukti sistem berfungsi.
         const confirmed = await fireConfirmationNotification();
         setMessage(
           confirmed
-            ? "✅ Monitoring aktif. Cek notifikasi sistem HP — seharusnya muncul konfirmasi dalam beberapa detik."
+            ? "✅ Monitoring aktif. Cek notifikasi di HP Anda — pesan konfirmasi akan muncul dalam beberapa detik."
             : notifGranted
               ? "✅ Monitoring aktif. Data akan disinkronkan otomatis di background."
-              : "✅ Monitoring aktif, tapi izin notifikasi sistem ditolak — investigasi hanya muncul sebagai banner di aplikasi. Aktifkan via Pengaturan > Aplikasi > Relivia > Notifikasi."
+              : "✅ Monitoring aktif, tapi izin notifikasi sistem ditolak — pembaruan hanya muncul sebagai banner di aplikasi. Aktifkan via Pengaturan > Aplikasi > Relivia > Notifikasi."
         );
       } else {
-        // Web demo: no native layer — monitoring runs via manual/simulation sync.
+        // Web: monitoring berjalan lewat sinkronisasi berkala saat aplikasi dibuka.
         setMonitoringActive(true);
         setMessage(
-          "✅ Monitoring simulasi aktif di browser. Di APK Android, langkah ini akan menghubungkan Health Connect asli."
+          "✅ Monitoring aktif. Data kesehatan akan disinkronkan otomatis dan Anda akan diberi tahu bila ada perubahan penting."
         );
       }
     } catch (e) {
       const text = e instanceof Error ? e.message : String(e);
       setMessage(
-        text.startsWith("Aplikasi Health Connect") ||
-        text.startsWith("Monitoring health data unavailable") ||
+        text.startsWith("Aplikasi pendamping") ||
+        text.startsWith("Data kesehatan") ||
         text.startsWith("Layar izin") ||
-        text.startsWith("Izin Health Connect")
+        text.startsWith("Izin akses")
           ? text
           : `Gagal mengaktifkan monitoring: ${text}`
       );
@@ -216,125 +187,81 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
     }
   }
 
-  async function handleRequestNotifOnly() {
-    setBusy(true);
+  const [diag, setDiag] = useState<string | null>(null);
+  async function handleShowBridge() {
+    if (diag !== null) {
+      setDiag(null);
+      return;
+    }
     try {
-      const granted = await requestNotificationPermission();
-      if (granted) {
-        const confirmed = await fireConfirmationNotification();
-        setMessage(
-          confirmed
-            ? "✅ Izin notifikasi sistem berhasil diaktifkan!"
-            : "✅ Izin notifikasi sistem diizinkan."
-        );
-      } else {
-        setMessage(
-          "⚠️ Izin notifikasi ditolak oleh sistem. Buka Pengaturan > Aplikasi > Relivia > Notifikasi untuk mengaktifkan manual."
-        );
-      }
+      const { getBridgeDiagnostics } = await import("@/lib/nativeBridge");
+      const d = await getBridgeDiagnostics();
+      setDiag(JSON.stringify(d));
     } catch (e) {
-      setMessage(`Gagal meminta izin notifikasi: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setBusy(false);
+      setDiag(`ERR: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
   return (
-    <div className="card p-5 mb-5">
-      <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
-        <div>
-          <div className="text-xs font-bold uppercase tracking-wide text-faint mb-1">
-            Automatic Monitoring
-          </div>
-          <div className="font-extrabold">
-            {monitoringActive ? "🟢 Monitoring Aktif" : "⚪ Monitoring Belum Aktif"}
-          </div>
+    <div className="relative overflow-hidden rounded-[20px] bg-[#8B5CF6] text-white p-5 mb-4 shadow-pop">
+
+      {/* Watermark icon */}
+      <Image
+        src="/images/icons/monitoring.svg"
+        alt=""
+        width={180}
+        height={180}
+        className="absolute -right-6 -top-6 opacity-15 pointer-events-none select-none"
+      />
+
+      {/* Konten asli, dikasih z-10 biar di atas watermark */}
+      <div className="relative z-10">
+        <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-white/75 mb-1">
+          Automatic Monitoring
         </div>
-        {!monitoringActive && (
+        <div className="text-[20px] leading-tight font-extrabold mb-1.5">
+          {monitoringActive ? "Monitoring Aktif" : "Monitoring Belum Aktif"}
+        </div>
+
+        <p className="text-[12px] leading-relaxed text-white/90 mb-3.5">
+          {native === true && available === false
+            ? sdkStatus === 3
+              ? "Aplikasi pendamping kesehatan perlu diperbarui dari Play Store sebelum bisa dihubungkan."
+              : "Data kesehatan belum tersedia di perangkat ini. Pastikan aplikasi pendamping kesehatan sudah terpasang dan memiliki data, lalu coba lagi."
+            : "Menghubungkan akses ke Health Connect dan notifikasi sistem, dan menjadwalkan sinkronisasi otomatis tiap 6 jam."}
+        </p>
+
+        <div className="flex flex-col gap-2">
           <button
             onClick={handleConnect}
             disabled={busy}
-            className="text-sm font-bold px-5 py-2.5 rounded-xl bg-primary text-white hover:bg-primary-dark transition disabled:opacity-60"
+            className="text-[12px] font-bold px-4 py-2 rounded-full bg-[#F9C6DD] text-[#6D28D9] hover:brightness-95 transition disabled:opacity-60 text-left"
           >
-            {busy ? "Menghubungkan…" : "🔗 Connect Health Data"}
+            {busy ? "Menghubungkan…" : "Hubungkan Health Connect"}
+          </button>
+        </div>
+
+        {native && showSettingsFallback && (
+          <button
+            onClick={() => openHealthSettings()}
+            className="mt-2 text-[12px] font-bold px-4 py-2 rounded-full bg-white/20 text-white hover:bg-white/30 transition"
+          >
+            ⚙️ Buka Pengaturan Kesehatan
           </button>
         )}
+
+        {message && (
+          <div
+            className={`text-[12px] font-medium rounded-xl px-4 py-2.5 mt-3 ${
+              message.startsWith("✅")
+                ? "bg-white/95 text-[#166534]"
+                : "bg-[#FFF1C1] text-[#7A4A00]"
+            }`}
+          >
+            {message}
+          </div>
+        )}
       </div>
-
-      <p className="text-xs text-soft leading-relaxed">
-        {native === true && available === false
-          ? sdkStatus === 3
-            ? "Health Connect perlu diupdate dari Play Store sebelum bisa dihubungkan."
-            : "Health Connect tidak tersedia di perangkat ini. Install aplikasi Health Connect dari Play Store (wajib di Android 13 ke bawah), pastikan ada data, lalu coba lagi."
-          : native === true
-            ? "Menghubungkan akan meminta izin Health Connect, izin notifikasi sistem, dan menjadwalkan sinkronisasi background tiap 6 jam."
-            : "Kamu membuka Relivia di browser: sinkronisasi berjalan saat halaman /health dibuka atau lewat tombol simulasi. Di APK Android, sinkronisasi berjalan otomatis di background via Health Connect."}
-      </p>
-
-      {native && (
-        <div className="flex gap-2 flex-wrap mt-3">
-          {showSettingsFallback && (
-            <button
-              onClick={() => openHealthSettings()}
-              className="text-xs font-semibold px-3.5 py-2 rounded-xl border border-border hover:border-primary/40 transition"
-            >
-              ⚙️ Buka Pengaturan Health Connect
-            </button>
-          )}
-          <button
-            onClick={handleRequestNotifOnly}
-            disabled={busy}
-            className="text-xs font-semibold px-3.5 py-2 rounded-xl border border-border hover:border-primary/40 transition"
-          >
-            🔔 Minta Izin Notifikasi Sistem
-          </button>
-          <button
-            onClick={() => openNotificationSettings()}
-            className="text-xs font-semibold px-3.5 py-2 rounded-xl border border-border hover:border-primary/40 transition"
-          >
-            ⚙️ Buka Pengaturan Notifikasi HP
-          </button>
-        </div>
-      )}
-
-      {native && (
-        <div className="mt-3 text-[11px] text-faint">
-          {appVersion !== null ? (
-            <>
-              Aplikasi v{appVersion}
-              {appVersionCode !== null && appVersionCode >= 0 ? ` (build ${appVersionCode})` : ""} • Web {WEB_BUILD}
-            </>
-          ) : (
-            <>
-              Versi APK tak terdeteksi ({appVersionError ?? "memeriksa…"}) • Web {WEB_BUILD} — install ulang APK terbaru bila versi tidak tampil
-            </>
-          )}
-        </div>
-      )}
-
-      {native && diag && (
-        <details className="mt-2 text-[11px] text-faint">
-          <summary className="cursor-pointer font-semibold">Detail bridge (kirim screenshot ini)</summary>
-          <pre className="mt-1 whitespace-pre-wrap break-all bg-bg rounded-lg p-2">
-{`header: ${diag.hasPluginHeader === null ? "?" : diag.hasPluginHeader ? `ADA (${diag.headerMethods?.length ?? 0} method)` : "TIDAK ADA"}${diag.headerError ? ` [${diag.headerError}]` : ""}
-plugin: ${diag.missingMethods.length === 0 ? "LENGKAP (native = terbaru)" : `KURANG: ${diag.missingMethods.join(", ")} → APK lama`}
-sdk: ${diag.sdkStatus ?? "?"}${diag.sdkError ? ` [${diag.sdkError}]` : ""}
-ver: ${diag.appVersion ?? "?"}${diag.appVersionCode !== null && diag.appVersionCode >= 0 ? ` (build ${diag.appVersionCode})` : ""}${diag.appVersionError ? ` [${diag.appVersionError}]` : ""}`}
-          </pre>
-        </details>
-      )}
-
-      {message && (
-        <div
-          className={`text-sm rounded-xl px-4 py-3 mt-3 ${
-            message.startsWith("✅")
-              ? "bg-green-tint text-green-deep"
-              : "bg-amber-tint text-amber-deep"
-          }`}
-        >
-          {message}
-        </div>
-      )}
     </div>
   );
 }

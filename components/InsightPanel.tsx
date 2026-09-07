@@ -44,9 +44,6 @@ export default function InsightPanel({
         <div className="card mb-6 overflow-hidden">
           <div className="px-6 py-4 bg-gradient-to-r from-[#2D1B69] to-[#4338CA] flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center">
-                <IconSparkle size={14} />
-              </div>
               <span className="text-white font-extrabold">Clinical Insight dari Agent</span>
             </div>
             <span className="text-white/60 text-xs">{new Date(latestNew.created_at).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}</span>
@@ -112,11 +109,11 @@ export default function InsightPanel({
 
             {/* Disclaimer */}
             <div className="bg-bg rounded-xl px-4 py-3.5 text-xs text-faint leading-relaxed">
-              ⚠️ Ini bukan diagnosis dan bukan keputusan klinis. Diskusikan informasi ini dengan tenaga kesehatan yang menangani pasien.
+              Ini bukan diagnosis dan bukan keputusan klinis. Diskusikan informasi ini dengan tenaga kesehatan yang menangani pasien.
             </div>
 
-            <Link href="/summary" className="block w-full text-center btn-primary py-3.5">
-              📋 Buat Consultation Brief
+            <Link href="/summary" className="flex w-full justify-center text-center btn-primary py-3.5">
+              Buat Consultation Brief
             </Link>
           </div>
         </div>

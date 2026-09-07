@@ -17,14 +17,24 @@ export default function Calendar({ checkins }: { checkins: DailyCheckin[] }) {
   for (let i = 0; i < startWeekday; i++) {
     cells.push(<div key={`e${i}`} className="aspect-square" />);
   }
+
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
     const entry = byDate.get(dateStr);
     const isToday = dateStr === now.toISOString().slice(0, 10);
-    let cls = "aspect-square rounded-[10px] flex flex-col items-center justify-center text-xs font-bold bg-bg text-soft";
-    if (entry) cls = "aspect-square rounded-[10px] flex flex-col items-center justify-center text-xs font-bold bg-primary-light text-primary-dark cursor-pointer hover:bg-primary-tint transition";
-    if (entry?.behavior_change_flag) cls = "aspect-square rounded-[10px] flex flex-col items-center justify-center text-xs font-bold bg-red-tint text-[#C1442B] cursor-pointer hover:bg-[#F3D3C3] transition";
-    if (isToday) cls += " ring-2 ring-primary ring-inset";
+
+    // Styling matching screenshot: vibrant soft pink/magenta/purple rounded pills with white text
+    let cls = "aspect-square rounded-2xl flex flex-col items-center justify-center text-sm font-bold bg-[#F5D0FE] text-[#86198F] transition-all";
+    
+    if (entry) {
+      cls = "aspect-square rounded-2xl flex flex-col items-center justify-center text-sm font-extrabold bg-[#E879F9] text-white cursor-pointer hover:bg-[#D946EF] shadow-sm transition-all";
+    }
+    if (entry?.behavior_change_flag) {
+      cls = "aspect-square rounded-2xl flex flex-col items-center justify-center text-sm font-extrabold bg-[#F43F5E] text-white cursor-pointer hover:bg-[#E11D48] shadow-sm transition-all";
+    }
+    if (isToday) {
+      cls += " ring-3 ring-[#7C3AED] ring-offset-2";
+    }
 
     cells.push(
       <div
@@ -44,15 +54,16 @@ export default function Calendar({ checkins }: { checkins: DailyCheckin[] }) {
         }
       >
         {d}
-        {entry && <span className="w-1 h-1 rounded-full bg-current mt-0.5" />}
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-7 gap-1.5 px-6 pt-4 pb-5">
+    <div className="grid grid-cols-7 gap-2 p-4 sm:p-6">
       {DOW.map((d) => (
-        <div key={d} className="text-center text-[10.5px] font-bold text-faint pb-1">{d}</div>
+        <div key={d} className="text-center text-xs font-bold text-gray-500 pb-1">
+          {d}
+        </div>
       ))}
       {cells}
     </div>

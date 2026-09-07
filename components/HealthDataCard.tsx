@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 
 type HealthMetric = {
   metric: string;
@@ -11,11 +12,46 @@ type HealthMetric = {
   has_data: boolean;
 };
 
-const METRIC_CONFIG: Record<string, { label: string; icon: string; unit_display: string }> = {
-  sleep_hours: { label: "Durasi Tidur", icon: "🌙", unit_display: "jam" },
-  steps: { label: "Langkah / Aktivitas", icon: "🏃", unit_display: "langkah" },
-  heart_rate: { label: "Detak Jantung", icon: "❤️", unit_display: "bpm" },
+const METRIC_CONFIG: Record<string, { label: string; icon: string; unit_display: string; card: string; value: string; unit: string; labelCls: string; baselineCls: string; watermark: string }> = {
+  sleep_hours: {
+    label: "Durasi Tidur",
+    icon: "/images/icons/moon.svg",
+    unit_display: "Jam",
+    card: "bg-[#1B2436]",
+    value: "text-[#FDEEB3]",
+    unit: "text-[#FDEEB3]/80",
+    labelCls: "text-white",
+    baselineCls: "text-white/55",
+    watermark: "",
+  },
+  steps: {
+    label: "Langkah / Aktivitas",
+    icon: "🏃",
+    unit_display: "langkah",
+    card: "bg-[#FFF3C2]",
+    value: "text-[#111827]",
+    unit: "text-[#111827]/60",
+    labelCls: "text-[#6D28D9]",
+    baselineCls: "text-[#67728A]",
+    watermark: "text-[#111827]",
+  },
+  heart_rate: {
+    label: "Detak Jantung",
+    icon: "❤️",
+    unit_display: "bpm",
+    card: "bg-[#FBD2E8]",
+    value: "text-[#111827]",
+    unit: "text-[#6D28D9]",
+    labelCls: "text-[#6D28D9]",
+    baselineCls: "text-[#6D28D9]/70",
+    watermark: "text-[#111827]",
+  },
 };
+
+function formatValue(metric: string, v: number): string {
+  if (metric === "sleep_hours") return v.toFixed(1);
+  return Math.round(v).toLocaleString("id-ID");
+}
 
 export default function HealthDataCard({
   metrics,
@@ -25,8 +61,8 @@ export default function HealthDataCard({
   patientId: string;
 }) {
   const [syncing, setSyncing] = useState(false);
-  const [seedingBaseline, setSeedingBaseline] = useState(false);
-  const [seedingChange, setSeedingChange] = useState(false);
+  const [loadingBaseline, setLoadingBaseline] = useState(false);
+  const [loadingChange, setLoadingChange] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   async function handleSync() {
@@ -43,8 +79,8 @@ export default function HealthDataCard({
     }
   }
 
-  async function seedDemo(scenario: "baseline_week" | "change_day") {
-    const setter = scenario === "baseline_week" ? setSeedingBaseline : setSeedingChange;
+  async function loadDemoData(scenario: "baseline_week" | "change_day") {
+    const setter = scenario === "baseline_week" ? setLoadingBaseline : setLoadingChange;
     setter(true);
     setMessage(null);
     try {
@@ -57,13 +93,13 @@ export default function HealthDataCard({
       if (!res.ok) throw new Error(json.error ?? "Gagal");
       if (scenario === "baseline_week") {
         setMessage(
-          `✅ Data baseline 7 hari berhasil di-seed (${json.seeded} records).`
+          `✅ Contoh data baseline 7 hari berhasil dimuat.`
         );
         // Refresh baseline calculation
         await fetch(`/api/patient/${patientId}/baseline`);
       } else {
-        // Day-8 demo: detection + agent already ran automatically (PRD §37).
-        // Fire the trigger notification like the native layer would.
+        // Hari perubahan: deteksi + analisis berjalan otomatis.
+        // Tampilkan notifikasi seperti yang dilakukan lapisan native.
         if (json.notification?.sessionId) {
           try {
             const { notifyAgent } = await import("@/lib/nativeBridge");
@@ -77,8 +113,8 @@ export default function HealthDataCard({
         }
         setMessage(
           json.agentSessionId
-            ? `✅ Perubahan terdeteksi otomatis — sesi investigasi dibuat (Agent analysis ${json.agentError ? "unavailable" : "berjalan"}). Buka /agent untuk melihat pertanyaan Relivia.`
-            : `✅ Data perubahan hari ini berhasil di-seed (${json.seeded} records). Reload untuk melihat perubahan.`
+            ? `✅ Perubahan terdeteksi otomatis — sesi pendalaman dibuat. Buka halaman Asisten untuk melihat pertanyaan Relivia.`
+            : `✅ Contoh data perubahan hari ini berhasil dimuat. Muat ulang untuk melihat perubahannya.`
         );
         await fetch(`/api/patient/${patientId}/baseline`);
       }
@@ -91,47 +127,58 @@ export default function HealthDataCard({
 
   return (
     <div>
-      {/* Metrics Grid */}
-      <div className="grid sm:grid-cols-3 gap-4 mb-5">
+      {/* Metrics Stack — seperti di desain */}
+      <div className="flex flex-col gap-3 mb-5">
         {metrics.map((m) => {
-          const cfg = METRIC_CONFIG[m.metric] ?? { label: m.metric, icon: "📊", unit_display: "" };
-          const isDown = (m.change_percent ?? 0) < 0;
-          const isUp = (m.change_percent ?? 0) > 0;
-          const isNeutral = m.change_percent === 0 || m.change_percent === null;
-          const isChange = Math.abs(m.change_percent ?? 0) >= 15;
+          const cfg = METRIC_CONFIG[m.metric] ?? { label: m.metric, icon: "📊", unit_display: "", card: "bg-white border border-border", value: "text-ink", unit: "text-soft", labelCls: "text-primary-deep", baselineCls: "text-faint", watermark: "text-ink" };
+          const pct = m.change_percent ?? null;
+          const down = (pct ?? 0) < 0;
+          const changed = pct !== null && Math.abs(pct) >= 0.05;
 
           return (
-            <div key={m.metric} className={`card p-5 border-2 transition ${isChange ? (isDown ? "border-red/40" : "border-amber/40") : "border-transparent"}`}>
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-2xl">{cfg.icon}</span>
-                {m.change_percent !== null && (
-                  <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${
-                    isDown && isChange ? "bg-red-tint text-red-deep" :
-                    isUp && isChange ? "bg-amber-tint text-amber-deep" :
-                    "bg-bg text-faint"
-                  }`}>
-                    {isDown ? "▼" : isUp ? "▲" : "→"} {Math.abs(m.change_percent)}%
+            <div key={m.metric} className={`relative overflow-hidden rounded-[18px] p-4 ${cfg.card}`}>
+              {/* watermark */}
+              {cfg.icon.endsWith(".svg") ? (
+                <img
+                  aria-hidden
+                  src={cfg.icon}
+                  alt=""
+                  draggable={false}
+                  className="pointer-events-none select-none absolute -right-2 -bottom-3 w-[120px] h-auto"
+                />
+              ) : (
+                <span aria-hidden className={`pointer-events-none select-none absolute -right-3 -bottom-5 text-[92px] leading-none opacity-15 ${cfg.watermark}`}>
+                  {cfg.icon}
+                </span>
+              )}
+              <div className="relative flex items-start justify-between gap-3">
+                <div className={`text-[32px] leading-none font-extrabold tracking-tight ${cfg.value}`}>
+                  {m.has_data && m.today_value !== null ? (
+                    <>{formatValue(m.metric, m.today_value)} <span className={`text-[15px] font-bold ${cfg.unit}`}>{cfg.unit_display}</span></>
+                  ) : (
+                    <span className="text-[28px] opacity-40">—</span>
+                  )}
+                </div>
+                {pct !== null && (
+                  <span className="shrink-0 text-[11px] font-extrabold px-2.5 py-1 rounded-full bg-white text-[#C1442B] shadow-sm">
+                    <span className="text-[#F2684B]">{down ? "⬇" : "⬆"}</span> {Math.abs(pct).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%
                   </span>
                 )}
               </div>
-              <div className="text-2xl font-extrabold mb-0.5">
-                {m.has_data && m.today_value !== null
-                  ? `${m.today_value} ${cfg.unit_display}`
-                  : <span className="text-faint text-lg">—</span>}
-              </div>
-              <div className="text-xs text-soft font-medium mb-1">{cfg.label}</div>
-              {m.baseline_value !== null && (
-                <div className="text-[11px] text-faint">
-                  Baseline: {m.baseline_value} {cfg.unit_display}
-                  {m.change_percent !== null && isChange && (
-                    <span className={isDown ? " text-red-deep font-semibold" : " text-amber-deep font-semibold"}>
-                      {" "}· {isDown ? "Menurun" : "Meningkat"} dari baseline
+              <div className={`relative mt-1.5 text-[15px] font-bold ${cfg.labelCls}`}>{cfg.label}</div>
+              {m.baseline_value !== null ? (
+                <div className={`relative mt-0.5 text-[11px] ${cfg.baselineCls}`}>
+                  Baseline: {m.metric === "sleep_hours" ? Number(m.baseline_value).toFixed(2) : Math.round(m.baseline_value).toLocaleString("id-ID")} {cfg.unit_display.toLowerCase()}
+                  {changed && (
+                    <span className="font-semibold text-[#C1442B]">
+                      {" "}· {down ? "Menurun" : "Meningkat"} dari baseline
                     </span>
                   )}
                 </div>
-              )}
-              {!m.has_data && (
-                <div className="text-[11px] text-faint italic mt-1">Belum ada data hari ini</div>
+              ) : (
+                <div className={`relative mt-0.5 text-[11px] italic ${cfg.baselineCls}`}>
+                  {m.has_data ? "Baseline belum tersedia" : "Belum ada data hari ini"}
+                </div>
               )}
             </div>
           );
@@ -147,36 +194,35 @@ export default function HealthDataCard({
         </div>
       )}
 
-      {/* Sync & Demo Controls */}
-      <div className="card p-5">
-        <div className="text-xs font-bold uppercase tracking-wide text-faint mb-3">
+      {/* Simulasi Health Connect */}
+      <div className="rounded-[20px] bg-[#7C5CFC] p-5">
+        <div className="text-[15px] font-extrabold uppercase tracking-wide text-[#FDEEB3] mb-2">
           Simulasi Health Connect
         </div>
-        <p className="text-xs text-soft mb-4 leading-relaxed">
-          Karena app berjalan di web, Health Connect Android disimulasikan.
-          Gunakan tombol di bawah untuk demo scenario PRD (Day 1–7 baseline + Day 8 perubahan).
+        <p className="text-[13px] leading-relaxed text-white/90 mb-4">
+          Simulasikan Data Health Connect. Gunakan tombol di bawah untuk demo scenario.
         </p>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-col gap-2.5">
           <button
-            onClick={() => seedDemo("baseline_week")}
-            disabled={seedingBaseline}
-            className="text-sm font-semibold px-4 py-2.5 rounded-xl border-2 border-border hover:border-primary/40 transition disabled:opacity-60"
+            onClick={() => loadDemoData("baseline_week")}
+            disabled={loadingBaseline}
+            className="w-full text-[13px] font-bold px-4 py-2.5 rounded-full bg-[#F9C6DD] text-[#6D28D9] hover:brightness-95 transition disabled:opacity-60"
           >
-            {seedingBaseline ? "Seeding…" : "🌱 Seed 7 Hari Baseline"}
+            {loadingBaseline ? "Memuat…" : "Seed 7 Hari Baseline"}
           </button>
           <button
-            onClick={() => seedDemo("change_day")}
-            disabled={seedingChange}
-            className="text-sm font-semibold px-4 py-2.5 rounded-xl border-2 border-amber/50 bg-amber-tint text-amber-deep hover:border-amber transition disabled:opacity-60"
+            onClick={() => loadDemoData("change_day")}
+            disabled={loadingChange}
+            className="w-full text-[13px] font-bold px-4 py-2.5 rounded-full bg-[#FFF1C1] text-[#6D28D9] hover:brightness-95 transition disabled:opacity-60"
           >
-            {seedingChange ? "Seeding…" : "⚡ Simulasi Hari Perubahan"}
+            {loadingChange ? "Memuat…" : "Simulasi Hari Perubahan"}
           </button>
           <button
             onClick={handleSync}
             disabled={syncing}
-            className="text-sm font-semibold px-4 py-2.5 rounded-xl border-2 border-primary/30 bg-primary-light text-primary hover:border-primary transition disabled:opacity-60"
+            className="w-full text-[13px] font-bold px-4 py-2.5 rounded-full bg-white text-[#6D28D9] hover:bg-white/90 transition disabled:opacity-60"
           >
-            {syncing ? "Menghitung…" : "🔄 Hitung Ulang Baseline"}
+            {syncing ? "Menghitung…" : "Hitung Ulang Baseline"}
           </button>
         </div>
       </div>

@@ -468,9 +468,9 @@ export default function AgentPanel({
             <button
               onClick={generateBrief}
               disabled={generatingBrief}
-              className="w-full btn-primary py-4 text-base disabled:opacity-60"
+              className="w-full btn-primary text-center py-4 text-base disabled:opacity-60"
             >
-              {generatingBrief ? "Membuat Consultation Brief…" : "📋 Buat Consultation Brief"}
+              {generatingBrief ? "Membuat Consultation Brief…" : "Buat Consultation Brief"}
             </button>
           )}
 

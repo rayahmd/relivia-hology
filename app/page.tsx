@@ -19,24 +19,58 @@ const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffec
 
 export default function LandingPage() {
   const router = useRouter();
-  const [isNative, setIsNative] = useState(() => {
-    if (typeof window !== "undefined") {
-      try {
-        return Capacitor.isNativePlatform();
-      } catch {
-        return false;
-      }
-    }
-    return false;
-  });
+  // Always start as false so the first client render matches the SSR HTML
+  // (full landing). Native detection happens in the layout effect below,
+  // which runs before browser paint — combined with the inline boot guard
+  // in app/layout.tsx (same purple background, body hidden), the landing
+  // pixels are never visible inside the APK. Never call browser-only APIs
+  // during render.
+  const [isNative, setIsNative] = useState(false);
 
   useIsomorphicLayoutEffect(() => {
+    let native = false;
     try {
       if (Capacitor.isNativePlatform()) {
-        setIsNative(true);
+        native = true;
       }
     } catch {
-      // Fallback
+      // Capacitor not ready — fall through to sticky-flag / WebView checks.
+    }
+    if (!native) {
+      try {
+        if (localStorage.getItem("rv-is-native") === "1") {
+          native = true;
+        }
+      } catch {
+        /* storage unavailable — ignore */
+      }
+    }
+    if (!native) {
+      try {
+        const ua = navigator.userAgent || "";
+        if (/Android/.test(ua) && /;\s*wv/.test(ua)) {
+          native = true;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    if (native) {
+      // Persist for the next cold start so the inline boot guard in
+      // app/layout.tsx can redirect before React even loads.
+      try {
+        localStorage.setItem("rv-is-native", "1");
+      } catch {
+        /* ignore */
+      }
+      // Belt-and-suspenders if the boot guard missed (e.g. bridge injected
+      // late on first install): hide landing synchronously before paint.
+      try {
+        document.documentElement.classList.add("rv-native-boot");
+      } catch {
+        /* ignore */
+      }
+      setIsNative(true);
     }
   }, []);
 

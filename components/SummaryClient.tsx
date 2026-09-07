@@ -158,7 +158,7 @@ export default function SummaryClient({
             <div className="text-sm text-soft">Gemini akan menyusun dokumen terstruktur siap pakai saat konsultasi.</div>
           </div>
           <button onClick={generateBrief} disabled={generating} className="btn-primary text-sm disabled:opacity-60 flex-none">
-            {generating ? "Membuat…" : "📋 Buat Brief"}
+            {generating ? "Membuat…" : "Buat Brief"}
           </button>
         </div>
       )}

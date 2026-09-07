@@ -9,12 +9,12 @@ export default function SosButton() {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-red-tint text-[#C1442B] text-xs font-extrabold border border-[#E4C1AC] hover:bg-red hover:text-white hover:border-red transition"
+        className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-[#E53935] hover:bg-[#D32F2F] text-white text-xs sm:text-sm font-bold shadow-sm transition active:scale-95"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
           <path d="M6 4C5 4 4 5 4 6c0 8 6 14 14 14 1 0 2-1 2-2v-2.5c0-.6-.4-1.1-1-1.3l-3-1c-.5-.2-1 0-1.3.4l-1 1.3c-2-1-3.6-2.6-4.6-4.6l1.3-1c.4-.3.6-.8.4-1.3l-1-3C10.1 4.4 9.6 4 9 4H6z" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
-        Butuh Bantuan
+        <span>Panggilan Darurat</span>
       </button>
 
       {open && (
