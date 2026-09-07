@@ -1,6 +1,7 @@
 package com.relivia.app;
 
 import android.os.Bundle;
+import android.webkit.CookieManager;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -12,5 +13,25 @@ public class MainActivity extends BridgeActivity {
         // and no ReliviaHealth method would ever resolve.
         registerPlugin(ReliviaHealthPlugin.class);
         super.onCreate(savedInstanceState);
+        try {
+            CookieManager cm = CookieManager.getInstance();
+            cm.setAcceptCookie(true);
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                cm.setAcceptThirdPartyCookies(getBridge().getWebView(), true);
+            }
+            cm.flush();
+        } catch (Exception e) {
+            // best-effort
+        }
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        try {
+            CookieManager.getInstance().flush();
+        } catch (Exception e) {
+            // best-effort
+        }
     }
 }

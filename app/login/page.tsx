@@ -57,7 +57,30 @@ export default function LoginPage() {
 
   // Auto-trigger Google sign-in if the landing page linked here with ?provider=google
   // Also surface OAuth callback failures (?error=auth_failed) as a clear message.
+  // Auto-redirect to /dashboard if user is already authenticated.
   useEffect(() => {
+    let redirected = false;
+
+    const checkAndRedirect = (session: unknown) => {
+      if (redirected) return;
+      if (session) {
+        redirected = true;
+        console.log("[ReliviaAuth] Authenticated session detected on /login -> redirecting to /dashboard");
+        router.replace("/dashboard");
+      }
+    };
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      checkAndRedirect(session);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log(`[ReliviaAuth] /login auth event: ${event}`);
+      if (session?.user) {
+        checkAndRedirect(session);
+      }
+    });
+
     const params = new URLSearchParams(window.location.search);
     if (params.get("provider") === "google") {
       handleGoogleSignIn();
@@ -65,6 +88,8 @@ export default function LoginPage() {
     if (params.get("error") === "auth_failed") {
       setError("Login Google gagal — sesi tidak terbentuk. Coba lagi.");
     }
+
+    return () => subscription.unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
