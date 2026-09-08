@@ -50,12 +50,12 @@ export default async function SummaryPage() {
   return (
     <div className="min-h-screen flex flex-col">
       <TopNav patientName={patient.name} patientAge={patient.age} />
-      <div className="flex-1 px-4 md:px-[5vw] py-8">
-        <div className="max-w-[1180px] mx-auto mb-6">
-          <h2 className="text-2xl font-extrabold mb-1">Ringkasan Konsultasi</h2>
-          <p className="text-sm text-soft">Halaman ini yang kamu tunjukkan ke psikiater — cetak atau unduh sebagai PDF.</p>
+      <div className="flex-1 px-4 md:px-[5vw] py-6 md:py-8">
+        <div className="max-w-[560px] mx-auto mb-4">
+          <h2 className="text-[22px] leading-tight font-extrabold text-ink mb-1.5">Ringkasan Kesehatan</h2>
+          <p className="text-[13px] leading-relaxed text-soft">Halaman ini yang kamu tunjukkan ke psikiater - cetak atau unduh sebagai PDF.</p>
         </div>
-        <div className="max-w-[1180px] mx-auto">
+        <div className="max-w-[560px] mx-auto">
           <SummaryClient
             checkins={checkins}
             insight={insight}

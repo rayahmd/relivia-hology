@@ -130,34 +130,39 @@ export default function SummaryClient({
   }
 
   return (
-    <div>
-      <div className="flex items-center gap-2.5 mb-5 flex-wrap">
-        <div className="flex gap-1 bg-bg border border-border rounded-full p-1">
+    <div className="max-w-[560px]">
+      <div className="flex flex-col gap-3 mb-5">
+        <div className="flex items-center gap-1.5 flex-wrap">
           {PERIODS.map((p) => (
             <button
               key={p.days}
               onClick={() => setPeriodDays(p.days)}
-              className={`px-3.5 py-2 rounded-full text-xs font-bold transition ${
-                periodDays === p.days ? "bg-primary text-white" : "text-soft hover:text-ink"
+              className={`px-4 py-1.5 rounded-full text-[13px] font-bold transition ${
+                periodDays === p.days
+                  ? "bg-primary text-white shadow-pop"
+                  : "text-soft hover:text-ink"
               }`}
             >
               {p.label}
             </button>
           ))}
         </div>
-        <button onClick={handleDownloadPdf} className="btn-primary text-sm" style={{ background: "#1B7A5C" }}>
+        <button
+          onClick={handleDownloadPdf}
+          className="w-fit rounded-full bg-[#D93A2B] hover:bg-[#C1442B] active:scale-[0.98] transition text-white text-sm font-bold px-5 py-2.5 shadow-[0_6px_16px_-6px_rgba(217,58,43,0.6)]"
+        >
           Unduh PDF
         </button>
       </div>
 
       {/* Generate Agent Brief */}
       {agentInsight && !brief && (
-        <div className="card p-5 mb-5 flex items-center justify-between gap-4 flex-wrap">
+        <div className="bg-[#FFF7D6] rounded-[18px] p-5 mb-5 flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <div className="font-bold mb-0.5">Buat Consultation Brief dari Agent Insight</div>
-            <div className="text-sm text-soft">Gemini akan menyusun dokumen terstruktur siap pakai saat konsultasi.</div>
+            <div className="font-bold mb-0.5 text-[14px] text-ink">Buat Consultation Brief dari Agent Insight</div>
+            <div className="text-[13px] text-soft">Gemini akan menyusun dokumen terstruktur siap pakai saat konsultasi.</div>
           </div>
-          <button onClick={generateBrief} disabled={generating} className="btn-primary text-sm disabled:opacity-60 flex-none">
+          <button onClick={generateBrief} disabled={generating} className="rounded-full bg-[#D93A2B] hover:bg-[#C1442B] text-white text-sm font-bold px-5 py-2.5 disabled:opacity-60 flex-none transition">
             {generating ? "Membuat…" : "Buat Brief"}
           </button>
         </div>
@@ -166,26 +171,25 @@ export default function SummaryClient({
 
       {/* Consultation Brief (Agent) */}
       {brief && (
-        <div className="card max-w-[720px] p-5 md:p-10 mb-5">
-          <div className="flex flex-col sm:flex-row sm:justify-between items-start gap-2 pb-5 mb-6 border-b border-border">
-            <div>
-              <h3 className="text-xl font-extrabold mb-1">Consultation Brief</h3>
-              <div className="text-[11px] font-bold uppercase tracking-wide text-faint">Relivia Agent · Disusun otomatis</div>
-            </div>
-            <div className="text-left sm:text-right text-xs text-soft leading-relaxed">
-              Periode: {brief.observation_period_start ?? "-"} – {brief.observation_period_end ?? "-"}<br />
-              Dicetak: {new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
-            </div>
+        <div className="bg-[#FFF7D6] rounded-[18px] p-5 md:p-6 mb-5">
+          <div className="mb-1">
+            <h3 className="text-[17px] font-extrabold text-ink leading-tight">Consultation Brief</h3>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-soft/80 mt-0.5">Relivia Agent · Disusun otomatis</div>
           </div>
+          <div className="text-[12px] text-soft leading-relaxed mt-2">
+            Periode: {brief.observation_period_start ?? "-"} – {brief.observation_period_end ?? "-"}<br />
+            Dicetak: {new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
+          </div>
+          <div className="h-px bg-ink/10 my-4" />
 
-          <div className="grid grid-cols-2 gap-3.5 mb-6">
-            <div className="bg-bg rounded-xl px-4 py-3">
-              <div className="text-xs text-soft font-medium">Pasien</div>
-              <div className="text-base font-extrabold">{patientName}</div>
+          <div className="grid grid-cols-2 gap-2.5 mb-4">
+            <div className="bg-white rounded-[14px] px-4 py-3 shadow-sm">
+              <div className="text-[12px] text-soft">Pasien</div>
+              <div className="text-[15px] font-extrabold text-ink leading-snug">{patientName}</div>
             </div>
-            <div className="bg-bg rounded-xl px-4 py-3">
-              <div className="text-xs text-soft font-medium">Kepatuhan Obat</div>
-              <div className="text-base font-extrabold">{brief.medication_status ?? `${adherence}%`}</div>
+            <div className="bg-white rounded-[14px] px-4 py-3 shadow-sm">
+              <div className="text-[12px] text-soft">Kepatuhan Obat</div>
+              <div className="text-[15px] font-extrabold text-ink leading-snug">{brief.medication_status ?? `${adherence}%`}</div>
             </div>
           </div>
 
@@ -194,7 +198,7 @@ export default function SummaryClient({
               <h4 className="text-[11px] uppercase tracking-wide text-primary font-extrabold mb-2">Perubahan Utama</h4>
               <ul className="space-y-1.5">
                 {brief.key_changes.map((c, i) => (
-                  <li key={i} className="flex gap-2 text-sm"><span className="text-red-deep">•</span>{c}</li>
+                  <li key={i} className="flex gap-2 text-sm text-ink"><span className="text-red-deep">•</span>{c}</li>
                 ))}
               </ul>
             </div>
@@ -205,8 +209,8 @@ export default function SummaryClient({
               <h4 className="text-[11px] uppercase tracking-wide text-primary font-extrabold mb-2">Perbandingan Baseline</h4>
               <div className="grid gap-2">
                 {Object.entries(brief.baseline_comparison).map(([metric, v]) => (
-                  <div key={metric} className="flex items-center justify-between bg-bg rounded-xl px-4 py-3 text-sm">
-                    <span className="font-medium capitalize">{metric.replace(/_/g, " ")}</span>
+                  <div key={metric} className="flex items-center justify-between bg-white rounded-[14px] px-4 py-3 text-sm shadow-sm">
+                    <span className="font-medium capitalize text-ink">{metric.replace(/_/g, " ")}</span>
                     <span className="font-bold text-primary">{v.baseline} → {v.current}</span>
                   </div>
                 ))}
@@ -217,60 +221,59 @@ export default function SummaryClient({
           {brief.caregiver_observation && (
             <div className="mb-5">
               <h4 className="text-[11px] uppercase tracking-wide text-primary font-extrabold mb-2">Observasi Caregiver</h4>
-              <p className="text-sm leading-relaxed">{brief.caregiver_observation}</p>
+              <p className="text-sm leading-relaxed text-ink">{brief.caregiver_observation}</p>
             </div>
           )}
 
           {brief.full_content && (
             <div className="mb-5">
               <h4 className="text-[11px] uppercase tracking-wide text-primary font-extrabold mb-2">Ringkasan Lengkap</h4>
-              <p className="text-sm leading-relaxed whitespace-pre-wrap">{brief.full_content}</p>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap text-ink">{brief.full_content}</p>
             </div>
           )}
 
           {brief.questions_for_consultation?.length > 0 && (
-            <div className="mb-5">
+            <div className="mb-2">
               <h4 className="text-[11px] uppercase tracking-wide text-primary font-extrabold mb-2">Poin untuk Konsultasi</h4>
               <ul className="space-y-1.5">
                 {brief.questions_for_consultation.map((q, i) => (
-                  <li key={i} className="flex gap-2 text-sm"><span className="text-primary font-bold">{i + 1}.</span>{q}</li>
+                  <li key={i} className="flex gap-2 text-sm text-ink"><span className="text-primary font-bold">{i + 1}.</span>{q}</li>
                 ))}
               </ul>
             </div>
           )}
 
-          <div className="mt-6 pt-4 border-t border-dashed border-border text-[11px] text-faint leading-relaxed">
+          <div className="mt-4 text-[11px] text-soft/80 leading-relaxed">
             Disusun otomatis oleh Relivia dari observasi caregiver. Bukan alat diagnosis — dokumen ini bahan diskusi, keputusan klinis sepenuhnya di tangan psikiater.
           </div>
         </div>
       )}
 
       {/* Legacy Summary */}
-      <div className="card max-w-[720px] p-5 md:p-10">
-        <div className="flex flex-col sm:flex-row sm:justify-between items-start gap-2 pb-5 mb-6 border-b border-border">
-          <div>
-            <h3 className="text-xl font-extrabold mb-1">Ringkasan Catatan Harian</h3>
-            <div className="text-[11px] font-bold uppercase tracking-wide text-faint">Relivia · Catatan Caregiver Terstruktur</div>
-          </div>
-          <div className="text-left sm:text-right text-xs text-soft leading-relaxed">
-            Periode: {rangeLabel} ({periodLabel})<br />
-            Dicetak: {new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
-          </div>
+      <div className="bg-[#FFF7D6] rounded-[18px] p-5 md:p-6">
+        <div className="mb-1">
+          <h3 className="text-[17px] font-extrabold text-ink leading-tight">Ringkasan Catatan Harian</h3>
+          <div className="text-[11px] font-bold uppercase tracking-wide text-soft/80 mt-0.5">Relivia · Catatan Caregiver Terstruktur</div>
         </div>
+        <div className="text-[12px] text-soft leading-relaxed mt-2">
+          Periode: {rangeLabel} ({periodLabel})<br />
+          Dicetak: {new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
+        </div>
+        <div className="h-px bg-ink/10 my-4" />
 
-        <div className="grid grid-cols-2 gap-3.5 mb-6">
-          <div className="bg-bg rounded-xl px-4 py-3">
-            <div className="text-xs text-soft font-medium">Pasien</div>
-            <div className="text-base font-extrabold">{patientName}</div>
+        <div className="grid grid-cols-2 gap-2.5 mb-4">
+          <div className="bg-white rounded-[14px] px-4 py-3 shadow-sm">
+            <div className="text-[12px] text-soft">Pasien</div>
+            <div className="text-[15px] font-extrabold text-ink leading-snug">{patientName}</div>
           </div>
-          <div className="bg-bg rounded-xl px-4 py-3">
-            <div className="text-xs text-soft font-medium">Kepatuhan obat periode ini</div>
-            <div className="text-base font-extrabold">{adherence}%</div>
+          <div className="bg-white rounded-[14px] px-4 py-3 shadow-sm">
+            <div className="text-[12px] text-soft leading-snug">Kepatuhan obat periode ini</div>
+            <div className="text-[15px] font-extrabold text-ink leading-snug">{adherence}%</div>
           </div>
           {insight && (
-            <div className="bg-bg rounded-xl px-4 py-3 col-span-2">
-              <div className="text-xs text-soft font-medium">Kategori perhatian</div>
-              <div className="text-base font-extrabold text-amber-deep">{riskLabel}</div>
+            <div className="bg-white rounded-[14px] px-4 py-3 shadow-sm col-span-2">
+              <div className="text-[12px] text-soft">Kategori perhatian</div>
+              <div className="text-[15px] font-extrabold text-amber-deep">{riskLabel}</div>
             </div>
           )}
         </div>
@@ -279,23 +282,23 @@ export default function SummaryClient({
           <>
             <div className="mb-5">
               <h4 className="text-[11px] uppercase tracking-wide text-primary font-extrabold mb-2">Ringkasan klinis</h4>
-              <p className="text-sm leading-relaxed">{insight.summary_text}</p>
+              <p className="text-sm leading-relaxed text-ink">{insight.summary_text}</p>
             </div>
-            <div className="mb-5">
+            <div className="mb-2">
               <h4 className="text-[11px] uppercase tracking-wide text-primary font-extrabold mb-2">Faktor yang teramati</h4>
               <ul className="space-y-1.5">
                 {insight.contributing_factors.map((f, i) => (
-                  <li key={i} className="flex gap-2 text-sm"><span className="text-primary">•</span>{f}</li>
+                  <li key={i} className="flex gap-2 text-sm text-ink"><span className="text-primary">•</span>{f}</li>
                 ))}
               </ul>
             </div>
           </>
         ) : (
-          <p className="text-sm text-soft">Belum ada insight yang dibuat. Buat dulu di halaman Insight Klinis.</p>
+          <p className="text-[13px] leading-relaxed text-soft">Belum ada insight yang dibuat. Buat dulu di halaman Insight Klinis.</p>
         )}
 
-        <div className="mt-6 pt-4 border-t border-dashed border-border text-[11px] text-faint leading-relaxed">
-          Disusun otomatis oleh Relivia dari catatan caregiver periode terpilih. Bukan alat diagnosis — dokumen ini bahan diskusi, keputusan klinis sepenuhnya di tangan psikiater.
+        <div className="mt-4 text-[11px] text-soft/80 leading-relaxed">
+          Disusun otomatis oleh Relivia dari catatan caregiver periode terpilih. Bukan alat diagnosis - dokumen ini bahan diskusi, keputusan klinis sepenuhnya di tangan psikiater.
         </div>
       </div>
     </div>
