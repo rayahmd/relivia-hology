@@ -86,8 +86,11 @@ export default function SummaryClient({
     }
   }
 
+  const [sharingPdf, setSharingPdf] = useState(false);
+
   async function handleDownloadPdf() {
     const { jsPDF } = await import("jspdf");
+    const { saveOrSharePdf } = await import("@/lib/sharePdf");
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const marginX = 48;
     let y = 60;
@@ -163,6 +166,16 @@ export default function SummaryClient({
       marginX, 780, { maxWidth: 500 }
     );
     doc.save(`ringkasan-konsultasi-${patientName.toLowerCase().replace(/\s+/g, "-")}.pdf`);
+    const filename = `ringkasan-konsultasi-${patientName.toLowerCase().replace(/\s+/g, "-")}.pdf`;
+    setSharingPdf(true);
+    setError(null);
+    try {
+      await saveOrSharePdf(doc, filename);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Gagal membagikan PDF.");
+    } finally {
+      setSharingPdf(false);
+    }
   }
 
   return (
@@ -185,9 +198,10 @@ export default function SummaryClient({
         </div>
         <button
           onClick={handleDownloadPdf}
-          className="w-fit rounded-full bg-[#D93A2B] hover:bg-[#C1442B] active:scale-[0.98] transition text-white text-sm font-bold px-5 py-2.5 shadow-[0_6px_16px_-6px_rgba(217,58,43,0.6)]"
+          disabled={sharingPdf}
+          className="w-fit rounded-full bg-[#D93A2B] hover:bg-[#C1442B] active:scale-[0.98] transition text-white text-sm font-bold px-5 py-2.5 shadow-[0_6px_16px_-6px_rgba(217,58,43,0.6)] disabled:opacity-60"
         >
-          Unduh PDF
+          {sharingPdf ? "Menyiapkan…" : "Unduh PDF"}
         </button>
       </div>
 
