@@ -9,6 +9,34 @@ const PERIODS = [
   { days: 30, label: "1 bulan" },
 ];
 
+const METRIC_LABELS: Record<string, string> = {
+  steps: "Steps",
+  sleep_hours: "Sleep",
+  heart_rate: "Denyut jantung",
+};
+
+function metricLabel(metric: string): string {
+  return METRIC_LABELS[metric] ?? metric.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function formatMetricValue(metric: string, value: number): string {
+  if (metric === "steps") return Math.round(value).toLocaleString("id-ID");
+  if (metric === "sleep_hours") return `${value.toLocaleString("id-ID", { maximumFractionDigits: 2 })} jam`;
+  if (metric === "heart_rate") return `${Math.round(value)} bpm`;
+  return String(value);
+}
+
+function changePercent(baseline: number, current: number, stored?: number): number {
+  if (typeof stored === "number" && Number.isFinite(stored)) return stored;
+  if (!baseline) return 0;
+  return ((current - baseline) / Math.abs(baseline)) * 100;
+}
+
+function formatChangeBadge(pct: number): string {
+  const arrow = pct < 0 ? "↓" : pct > 0 ? "↑" : "→";
+  return `${arrow} ${Math.abs(pct).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`;
+}
+
 export default function SummaryClient({
   checkins,
   insight,
@@ -102,6 +130,14 @@ export default function SummaryClient({
     }
     if (brief?.key_changes?.length) {
       section("Perubahan Utama", brief.key_changes.map((c, i) => `${i + 1}. ${c}`).join("\n"));
+    }
+    if (brief?.baseline_comparison && Object.keys(brief.baseline_comparison).length) {
+      const lines = Object.entries(brief.baseline_comparison).map(([metric, v]) => {
+        const val = v as { baseline: number; current: number; change_percent?: number };
+        const pct = changePercent(val.baseline, val.current, val.change_percent);
+        return `${metricLabel(metric)}: ${formatMetricValue(metric, val.baseline)} -> ${formatMetricValue(metric, val.current)} | ${formatChangeBadge(pct)}`;
+      });
+      section("Perbandingan Baseline", lines.join("\n"));
     }
     if (brief?.caregiver_observation) {
       section("Observasi Caregiver", brief.caregiver_observation);
@@ -208,12 +244,16 @@ export default function SummaryClient({
             <div className="mb-5">
               <h4 className="text-[11px] uppercase tracking-wide text-primary font-extrabold mb-2">Perbandingan Baseline</h4>
               <div className="grid gap-2">
-                {Object.entries(brief.baseline_comparison).map(([metric, v]) => (
-                  <div key={metric} className="flex items-center justify-between bg-white rounded-[14px] px-4 py-3 text-sm shadow-sm">
-                    <span className="font-medium capitalize text-ink">{metric.replace(/_/g, " ")}</span>
-                    <span className="font-bold text-primary">{v.baseline} → {v.current}</span>
-                  </div>
-                ))}
+                {Object.entries(brief.baseline_comparison).map(([metric, v]) => {
+                  const val = v as { baseline: number; current: number; change_percent?: number };
+                  const pct = changePercent(val.baseline, val.current, val.change_percent);
+                  return (
+                    <div key={metric} className="flex items-center justify-between gap-3 bg-white rounded-[14px] px-4 py-3 text-sm shadow-sm">
+                      <span className="font-medium text-ink">{metricLabel(metric)}</span>
+                      <span className="font-bold text-primary text-right whitespace-nowrap">{formatMetricValue(metric, val.baseline)} → {formatMetricValue(metric, val.current)} <span className="font-extrabold">| {formatChangeBadge(pct)}</span></span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

@@ -135,7 +135,7 @@ export type ConsultationBrief = {
   observation_period_start: string | null;
   observation_period_end: string | null;
   key_changes: string[];
-  baseline_comparison: Record<string, { baseline: number; current: number; unit: string }>;
+  baseline_comparison: Record<string, { baseline: number; current: number; unit: string; change_percent?: number }>;
   caregiver_observation: string | null;
   medication_status: string | null;
   relevant_history: string | null;
