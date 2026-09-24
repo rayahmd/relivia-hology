@@ -217,6 +217,17 @@ export async function PUT(req: NextRequest) {
         const pipeline = await runAutomaticPipeline(supabase, fullPatient, baselineMap).catch(
           () => null
         );
+        // Saat sesi sudah aktif (dedup), frontend perlu status sesi agar bisa
+        // menampilkan ulang banner yang tepat (agent_question vs insight_ready).
+        let sessionStatus: string | null = null;
+        if (pipeline?.sessionId) {
+          const { data: s } = await supabase
+            .from("agent_sessions")
+            .select("status")
+            .eq("id", pipeline.sessionId)
+            .maybeSingle();
+          sessionStatus = (s as { status?: string } | null)?.status ?? null;
+        }
         return NextResponse.json({
           ok: true,
           seeded: records.length,
@@ -225,6 +236,7 @@ export async function PUT(req: NextRequest) {
           agentSessionId: pipeline?.sessionId ?? null,
           notification: pipeline?.notification ?? null,
           ...(pipeline?.skippedReason ? { skipped: pipeline.skippedReason } : {}),
+          ...(sessionStatus ? { sessionStatus } : {}),
           ...(pipeline?.agentError ? { agentError: pipeline.agentError } : {}),
         });
       }

@@ -109,40 +109,55 @@ export default function HealthDataCard({
         await fetch(`/api/patient/${patientId}/baseline`);
       } else {
         // Hari perubahan: deteksi + analisis berjalan otomatis di server.
-        // Kalau pipeline menghasilkan notifikasi, tampilkan banner in-app
-        // SEKARANG (tanpa menunggu poll 60 detik) + notifikasi OS.
+        // Tampilkan hasil SESUAI kasusnya — jangan ada lagi kegagalan diam-diam.
         const notif = json.notification as { type: PendingNotification["type"]; sessionId: string } | null;
-        if (notif?.sessionId) {
-          const sessionId = notif.sessionId;
-          pushNotification({
-            type: notif.type,
-            sessionId,
-            title: "Relivia",
-            body:
-              notif.type === "insight_ready"
-                ? "Relivia menemukan insight baru tentang pola pasien. Ketuk untuk melihat."
-                : "Perubahan pada pola pasien terdeteksi. Relivia membutuhkan konteks tambahan untuk melanjutkan analisis. Ketuk untuk melihat.",
-            deep_link: `/agent?session=${sessionId}`,
-            updated_at: new Date().toISOString(),
-          });
+        const showBanner = async (type: PendingNotification["type"], sessionId: string, force: boolean) => {
+          pushNotification(
+            {
+              type,
+              sessionId,
+              title: "Relivia",
+              body:
+                type === "insight_ready"
+                  ? "Relivia menemukan insight baru tentang pola pasien. Ketuk untuk melihat."
+                  : "Perubahan pada pola pasien terdeteksi. Relivia membutuhkan konteks tambahan untuk melanjutkan analisis. Ketuk untuk melihat.",
+              deep_link: `/agent?session=${sessionId}`,
+              updated_at: new Date().toISOString(),
+            },
+            { force }
+          );
           try {
             const { notifyAgent } = await import("@/lib/nativeBridge");
-            await notifyAgent({ type: notif.type, sessionId });
+            await notifyAgent({ type, sessionId });
           } catch {
             /* banner in-app di atas sudah cukup */
           }
+        };
+        if (notif?.sessionId) {
+          // Kasus normal: perubahan terdeteksi + sesi/notif baru → banner SEKARANG.
+          await showBanner(notif.type, notif.sessionId, false);
           setMessage(
             `✅ Perubahan terdeteksi — notifikasi sudah muncul, ketuk untuk melihat di halaman Asisten.`
           );
+        } else if (json.agentError) {
+          // Gemini gagal: sesi tercatat tapi analisis tidak jalan. Selama ini
+          // disembunyikan — tampilkan agar tidak dikira berhasil.
+          setMessage(`Gagal menjalankan agent: ${json.agentError}`);
         } else if (json.agentSessionId) {
-          // Dedup backend (sesi masih aktif): tidak ada notif baru yang
-          // dibuat — arahkan ke sesi yang sudah ada, jangan klaim sesi baru.
+          // Dedup backend (sesi masih aktif): tidak ada sesi/notif baru.
+          // Tampilkan ULANG banner sesi yang ada (force, karena user eksplisit
+          // memintanya) agar tidak buntu di pesan teks.
+          const resumedType =
+            json.sessionStatus === "completed" ? "insight_ready" : "agent_question";
+          await showBanner(resumedType, json.agentSessionId, true);
           setMessage(
-            `✅ Perubahan tercatat. Sesi pendalaman masih aktif — buka halaman Asisten untuk melanjutkan.`
+            `✅ Sesi pendalaman masih aktif — notifikasi ditampilkan ulang, ketuk untuk melanjutkan di halaman Asisten.`
           );
         } else {
+          // detected=false (biasanya baseline belum cukup: butuh 3+ sampel
+          // per metrik) → pandu urutan demo yang benar, bukan pesan sukses semu.
           setMessage(
-            `✅ Contoh data perubahan hari ini berhasil dimuat. Muat ulang untuk melihat perubahannya.`
+            `Baseline belum cukup untuk deteksi (butuh 3+ sampel per metrik). Tekan "Seed 7 Hari Baseline" dulu, lalu tekan simulasi lagi.`
           );
         }
         await fetch(`/api/patient/${patientId}/baseline`);

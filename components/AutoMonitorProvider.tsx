@@ -31,8 +31,10 @@ type MonitorContext = {
    * Dipakai mis. tombol "Simulasi Hari Perubahan" yang sudah tahu
    * sessionId dari respons API. Dedup key sama seperti poll sehingga
    * poll berikutnya tidak menampilkannya dua kali.
+   * `force: true` = tampilkan walau key sudah pernah terlihat; hanya
+   * untuk aksi eksplisit user (mis. menekan ulang banner sesi aktif).
    */
-  pushNotification: (n: PendingNotification) => void;
+  pushNotification: (n: PendingNotification, opts?: { force?: boolean }) => void;
   /** Flush offline queue on demand; returns remaining count. */
   flushQueue: () => Promise<number>;
   queueRemaining: number;
@@ -95,12 +97,13 @@ export default function AutoMonitorProvider({ children }: { children: ReactNode 
 
   const dismiss = useCallback(() => setPending(null), []);
 
-  const pushNotification = useCallback((n: PendingNotification) => {
+  const pushNotification = useCallback((n: PendingNotification, opts?: { force?: boolean }) => {
     if (seenRef.current === null) seenRef.current = loadSeen();
     const key = `${n.type}:${n.sessionId}`;
     // Sudah pernah ditampilkan (mis. dari simulasi sebelumnya) → jangan
-    // spam banner yang sama berulang-ulang.
-    if (seenRef.current.has(key)) return;
+    // spam banner yang sama berulang-ulang. force melewati cek ini untuk
+    // aksi eksplisit user yang memang meminta notifnya ditampilkan lagi.
+    if (!opts?.force && seenRef.current.has(key)) return;
     seenRef.current.add(key);
     saveSeen(seenRef.current);
     setPending(n);
