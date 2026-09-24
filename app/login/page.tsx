@@ -23,6 +23,12 @@ export default function LoginPage() {
   const [checkEmail, setCheckEmail] = useState(false);
   const [resending, setResending] = useState(false);
   const [resent, setResent] = useState(false);
+  // Gerbang client-side: jangan paint form sebelum getSession memastikan
+  // tidak ada sesi (mencegah flash form ±1 detik saat SPA navigation ke
+  // /login oleh user yang sudah login — middleware sudah menangani
+  // full-page load, ini menutup celah navigasi client-side).
+  const [authChecked, setAuthChecked] = useState(false);
+  const [hasSession, setHasSession] = useState(false);
 
   async function resendEmail() {
     setResending(true);
@@ -87,6 +93,7 @@ export default function LoginPage() {
       if (redirected) return;
       if (session) {
         redirected = true;
+        setHasSession(true);
         console.log("[ReliviaAuth] Authenticated session detected on /login -> redirecting to /dashboard");
         router.replace("/dashboard");
       }
@@ -94,12 +101,15 @@ export default function LoginPage() {
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       checkAndRedirect(session);
+      if (!session) setAuthChecked(true);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       console.log(`[ReliviaAuth] /login auth event: ${event}`);
       if (session?.user) {
         checkAndRedirect(session);
+      } else if (event === "INITIAL_SESSION") {
+        setAuthChecked(true);
       }
     });
 
@@ -218,6 +228,13 @@ export default function LoginPage() {
     // /dashboard dengan cookie sesi terbaru; refresh() ganda justru
     // me-revalidate /login yang lama dan memperlambat transisi.
     router.replace("/dashboard");
+  }
+
+  // Sesi ada (dialihkan) atau belum dicek: jangan paint form login sama
+  // sekali — hanya placeholder kosong. Form hanya muncul setelah
+  // dipastikan tidak ada sesi.
+  if (hasSession || !authChecked) {
+    return <main className="min-h-screen bg-bg" />;
   }
 
   return (

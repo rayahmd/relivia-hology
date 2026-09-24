@@ -33,8 +33,20 @@ export async function middleware(request: NextRequest) {
   const { data: claimsData } = await supabase.auth.getClaims();
   const userId = claimsData?.claims?.sub as string | undefined;
 
+  const pathname = request.nextUrl.pathname;
+
+  // User yang sudah login tidak boleh melihat /login sedetik pun:
+  // tendang ke /dashboard di server (sebelum HTML login terkirim).
+  // Gate onboarding di bawah / di /dashboard akan meneruskan ke
+  // /onboarding bila perlu — tetap tanpa paint halaman login.
+  if (userId && (pathname === "/login" || pathname === "/")) {
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = "/dashboard";
+    return NextResponse.redirect(redirectUrl);
+  }
+
   const authRequiredPaths = ["/dashboard", "/checkin", "/insight", "/summary", "/community", "/onboarding", "/agent", "/health"];
-  const isAuthRequired = authRequiredPaths.some((p) => request.nextUrl.pathname.startsWith(p));
+  const isAuthRequired = authRequiredPaths.some((p) => pathname.startsWith(p));
 
   if (isAuthRequired && !userId) {
     const redirectUrl = request.nextUrl.clone();
@@ -67,5 +79,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/checkin/:path*", "/insight/:path*", "/summary/:path*", "/community/:path*", "/onboarding/:path*", "/agent/:path*", "/health/:path*"],
+  matcher: ["/", "/login", "/dashboard/:path*", "/checkin/:path*", "/insight/:path*", "/summary/:path*", "/community/:path*", "/onboarding/:path*", "/agent/:path*", "/health/:path*"],
 };
