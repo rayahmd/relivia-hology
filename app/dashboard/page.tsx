@@ -13,13 +13,57 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const supabase = createClient();
   const patient = await getOrCreatePatient();
+  const today = new Date().toISOString().slice(0, 10);
 
-  const { data: checkinsRaw } = await supabase
-    .from("daily_checkins")
-    .select("*")
-    .eq("patient_id", patient.id)
-    .order("checkin_date", { ascending: false })
-    .limit(14);
+  // Independent queries dijalankan paralel (satu round-trip batch),
+  // bukan 6x sequential await — TTFB turun dari jumlah latensi
+  // menjadi latensi query terlambat saja. Tidak ada perubahan behavior.
+  const [
+    { data: checkinsRaw },
+    { data: todayHealth },
+    { data: baselines },
+    { data: recentChanges },
+    { data: activeSession },
+    { data: latestInsight },
+  ] = await Promise.all([
+    supabase
+      .from("daily_checkins")
+      .select("*")
+      .eq("patient_id", patient.id)
+      .order("checkin_date", { ascending: false })
+      .limit(14),
+    supabase
+      .from("health_data")
+      .select("*")
+      .eq("patient_id", patient.id)
+      .eq("recorded_at", today),
+    supabase
+      .from("baselines")
+      .select("*")
+      .eq("patient_id", patient.id),
+    supabase
+      .from("detected_changes")
+      .select("*")
+      .eq("patient_id", patient.id)
+      .gte("detected_at", new Date(Date.now() - 86400000 * 2).toISOString())
+      .order("detected_at", { ascending: false })
+      .limit(5),
+    supabase
+      .from("agent_sessions")
+      .select("*")
+      .eq("patient_id", patient.id)
+      .in("status", ["investigating", "waiting_for_caregiver"])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("insights")
+      .select("*")
+      .eq("patient_id", patient.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
 
   const checkins = ((checkinsRaw ?? []) as DailyCheckin[]).reverse();
   const last7 = checkins.slice(-7);
@@ -29,55 +73,13 @@ export default async function DashboardPage() {
   const flagCount = checkins.filter((c) => c.behavior_change_flag).length;
 
   // Today's check-in
-  const today = new Date().toISOString().slice(0, 10);
   const todayCheckin = checkins.find((c) => c.checkin_date === today) ?? null;
-
-  // Health data today
-  const { data: todayHealth } = await supabase
-    .from("health_data")
-    .select("*")
-    .eq("patient_id", patient.id)
-    .eq("recorded_at", today);
-
-  // Baselines
-  const { data: baselines } = await supabase
-    .from("baselines")
-    .select("*")
-    .eq("patient_id", patient.id);
 
   const baselineMap: Record<string, number> = {};
   for (const b of baselines ?? []) baselineMap[b.metric] = b.baseline_value;
 
   const healthMap: Record<string, { value: number; unit: string }> = {};
   for (const d of todayHealth ?? []) healthMap[d.data_type] = { value: d.value, unit: d.unit };
-
-  // Change detection summary
-  const { data: recentChanges } = await supabase
-    .from("detected_changes")
-    .select("*")
-    .eq("patient_id", patient.id)
-    .gte("detected_at", new Date(Date.now() - 86400000 * 2).toISOString())
-    .order("detected_at", { ascending: false })
-    .limit(5);
-
-  // Active agent session
-  const { data: activeSession } = await supabase
-    .from("agent_sessions")
-    .select("*")
-    .eq("patient_id", patient.id)
-    .in("status", ["investigating", "waiting_for_caregiver"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  // Latest insight
-  const { data: latestInsight } = await supabase
-    .from("insights")
-    .select("*")
-    .eq("patient_id", patient.id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
 
   const hasChanges = (recentChanges ?? []).length > 0;
   const hasInsight = !!latestInsight;

@@ -49,8 +49,7 @@ export default function TopNav({ patientName, patientAge }: { patientName: strin
   async function handleLogout() {
     setOpen(false);
     await supabase.auth.signOut();
-    router.push("/login");
-    router.refresh();
+    router.replace("/login");
   }
 
   return (

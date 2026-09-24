@@ -86,59 +86,50 @@ export default function LandingPage() {
       return;
     }
 
-    if (!Capacitor.isNativePlatform()) {
-      return;
-    }
-
     const supabase = createClient();
     let handled = false;
 
+    // SPA navigation (bukan window.location.replace): tidak ada full reload,
+    // tidak ada kehilangan router state, cepat di WebView maupun browser.
     const navigate = (destination: string, reason: string) => {
       if (handled) return;
       handled = true;
-      console.log(`[ReliviaAuth] Native launch redirecting to ${destination} (reason: ${reason})`);
-      window.location.replace(destination);
+      console.log(`[ReliviaAuth] Launch redirecting to ${destination} (reason: ${reason})`);
+      router.replace(destination);
     };
 
-    // 1. Immediate check: if a valid session is instantly available
+    // Single deterministic check: sesi yang sudah persisten → dashboard,
+    // tidak ada sesi → biarkan landing (web) / ke login (native).
+    // Satu getSession + satu listener INITIAL_SESSION; tanpa timeout
+    // artifisial — tidak ada polling, tidak ada reload.
+    // Web yang sudah login dibuka di "/" → langsung dashboard
+    // (sebelumnya: early-return sehingga user authed stuck di landing).
+    // Native tanpa sesi → /login agar landing tidak sempat tampil di APK
+    // (placeholder ungu di bawah menutup jeda transisi).
+    const isNative = Capacitor.isNativePlatform();
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         navigate("/dashboard", "immediate getSession valid user");
+      } else if (isNative) {
+        navigate("/login", "immediate getSession no user (native)");
       }
     }).catch(() => {});
 
-    // 2. Listen for Supabase auth state initialization (handles token refresh & persistent cookie restoration)
+    // Listen for Supabase auth state initialization (handles token refresh & persistent cookie restoration)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       console.log(`[ReliviaAuth] Auth state event on launch: ${event}, user: ${session?.user?.id ?? "none"}`);
-      if (event === "INITIAL_SESSION" || event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
-        if (session?.user) {
-          navigate("/dashboard", `onAuthStateChange:${event}`);
-        } else if (event === "INITIAL_SESSION") {
-          navigate("/login", "onAuthStateChange:INITIAL_SESSION_no_user");
-        }
-      } else if (event === "SIGNED_OUT") {
+      if (session?.user) {
+        navigate("/dashboard", `onAuthStateChange:${event}`);
+      } else if (event === "SIGNED_OUT" && isNative) {
         navigate("/login", "onAuthStateChange:SIGNED_OUT");
       }
+      // Web tanpa sesi: tetap di landing (jangan tendang ke /login).
+      // INITIAL_SESSION tanpa user bukan aksi — biarkan hasil getSession
+      // di atas yang menentukan, agar tidak ada redirect sementara.
     });
-
-    // 3. Fallback timeout: if network or auth initialization takes longer than 2.5 seconds
-    const timer = setTimeout(async () => {
-      if (handled) return;
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          navigate("/dashboard", "timeout fallback session exists");
-        } else {
-          navigate("/login", "timeout fallback no session");
-        }
-      } catch {
-        navigate("/login", "timeout fallback error");
-      }
-    }, 2500);
 
     return () => {
       subscription.unsubscribe();
-      clearTimeout(timer);
     };
   }, [router]);
 

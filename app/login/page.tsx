@@ -76,9 +76,10 @@ export default function LoginPage() {
     // on success, Supabase redirects the browser to Google — no further code runs here
   }
 
-  // Auto-trigger Google sign-in if the landing page linked here with ?provider=google
-  // Also surface OAuth callback failures (?error=auth_failed) as a clear message.
   // Auto-redirect to /dashboard if user is already authenticated.
+  // Redirect only fires on a CONFIRMED session (getSession / listener),
+  // never on "auth not yet checked" — "unknown" is not treated as logged
+  // out, so there is no flash of a wrong route.
   useEffect(() => {
     let redirected = false;
 
@@ -131,7 +132,6 @@ export default function LoginPage() {
           onSuccess: () => {
             setGoogleLoading(false);
             router.replace("/dashboard");
-            router.refresh();
           },
           onError: (message) => {
             setError(message);
@@ -185,8 +185,7 @@ export default function LoginPage() {
       // Session langsung ada kalau "Confirm email" nonaktif — masuk sekarang.
       if (data.session) {
         sessionStorage.setItem("registered", "1");
-        router.push("/dashboard");
-        router.refresh();
+        router.replace("/dashboard");
         return;
       }
 
@@ -194,8 +193,7 @@ export default function LoginPage() {
       const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
       if (!signInError) {
         sessionStorage.setItem("registered", "1");
-        router.push("/dashboard");
-        router.refresh();
+        router.replace("/dashboard");
         return;
       }
 
@@ -212,8 +210,11 @@ export default function LoginPage() {
       return;
     }
 
-    router.push("/dashboard");
-    router.refresh();
+    // replace (bukan push): user tidak bisa Back ke /login setelah masuk.
+    // Tanpa router.refresh(): navigasi App Router sudah mem-fetch RSC
+    // /dashboard dengan cookie sesi terbaru; refresh() ganda justru
+    // me-revalidate /login yang lama dan memperlambat transisi.
+    router.replace("/dashboard");
   }
 
   return (
