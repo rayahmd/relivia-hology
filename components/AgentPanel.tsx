@@ -69,6 +69,7 @@ export default function AgentPanel({
   const pollCount = useRef(0);
   const pollTimer = useRef<number | null>(null);
   const answeringRef = useRef(false);
+  const briefRef = useRef<HTMLDivElement | null>(null);
 
   // Poll timers must never outlive the panel.
   useEffect(() => () => {
@@ -255,18 +256,34 @@ export default function AgentPanel({
 
   async function generateBrief() {
     setGeneratingBrief(true);
+    setErrorMsg(null);
+    // Client-side ceiling: the server times out at 60s; never spin forever.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 90_000);
     try {
       const res = await fetch(`/api/consultation/${patientId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ insight_id: insight?.id }),
+        signal: ctrl.signal,
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Gagal membuat brief");
-      setBrief(json.brief?.full_content ?? null);
+      const content: string | null = json.brief?.full_content ?? null;
+      if (!content || !content.trim()) throw new Error("Brief kosong — coba lagi.");
+      setBrief(content);
+      // Bawa user langsung ke hasilnya agar "selesai" terlihat jelas.
+      requestAnimationFrame(() => {
+        briefRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
+      if (e instanceof Error && e.name === "AbortError") {
+        setErrorMsg("Pembuatan brief terlalu lama. Coba lagi.");
+      } else {
+        setErrorMsg(e instanceof Error ? e.message : String(e));
+      }
     } finally {
+      clearTimeout(timer);
       setGeneratingBrief(false);
     }
   }
@@ -536,7 +553,7 @@ export default function AgentPanel({
 
           {/* Consultation Brief */}
           {brief && (
-            <div className="card p-6">
+            <div ref={briefRef} className="card p-6 scroll-mt-4">
               <div className="text-[11px] font-bold uppercase tracking-wide text-primary mb-4">Consultation Brief</div>
               <div className="text-sm leading-relaxed whitespace-pre-wrap">{brief}</div>
               <div className="mt-5 pt-4 border-t border-dashed border-border text-xs text-faint">

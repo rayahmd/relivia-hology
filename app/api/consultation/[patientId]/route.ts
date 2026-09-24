@@ -66,24 +66,39 @@ Respond with valid JSON:
   "full_summary": "2-3 sentence narrative combining wearable changes and caregiver observation, Bahasa Indonesia"
 }`;
 
-async function callGemini(context: string): Promise<string> {
-  const res = await fetch(GEMINI_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": process.env.GEMINI_API_KEY ?? "",
-    },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: BRIEF_SYSTEM_PROMPT }] },
-      contents: [{ role: "user", parts: [{ text: context }] }],
-      generationConfig: { maxOutputTokens: 1500, temperature: 0.2 },
-    }),
-    cache: "no-store",
-  });
+/** Gemini call with a hard timeout — a hanging upstream must never wedge the UI. */
+const GEMINI_TIMEOUT_MS = 60_000;
 
-  if (!res.ok) throw new Error(`Gemini ${res.status}`);
-  const data = await res.json();
-  return data.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ?? "";
+async function callGemini(context: string): Promise<string> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), GEMINI_TIMEOUT_MS);
+  try {
+    const res = await fetch(GEMINI_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": process.env.GEMINI_API_KEY ?? "",
+      },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: BRIEF_SYSTEM_PROMPT }] },
+        contents: [{ role: "user", parts: [{ text: context }] }],
+        generationConfig: { maxOutputTokens: 1500, temperature: 0.2 },
+      }),
+      cache: "no-store",
+      signal: ctrl.signal,
+    });
+
+    if (!res.ok) throw new Error(`Gemini ${res.status}`);
+    const data = await res.json();
+    return data.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ?? "";
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error("BRIEF_GEMINI_TIMEOUT");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function GET(
@@ -318,6 +333,14 @@ Buat Consultation Brief yang komprehensif berdasarkan semua informasi di atas. T
     return NextResponse.json({ brief: savedBrief });
   } catch (err) {
     console.error("[consultation]", err);
-    return NextResponse.json({ error: String(err) }, { status: 500 });
+    const msg = String(err);
+    // Timeout upstream → 504 + pesan ramah agar UI selalu dapat respons.
+    if (msg.includes("BRIEF_GEMINI_TIMEOUT")) {
+      return NextResponse.json(
+        { error: "AI sedang sibuk dan tidak merespons tepat waktu. Coba lagi." },
+        { status: 504 }
+      );
+    }
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
