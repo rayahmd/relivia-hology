@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { DEFAULT_QUESTION, DEFAULT_QUESTION_FOCUS } from "@/lib/agentCore";
 
 const GEMINI_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent";
@@ -149,7 +150,20 @@ Apakah kamu sudah memiliki cukup konteks untuk menghasilkan clinical insight?
 
     const rawResponse = await callGemini([
       { role: "user", parts: [{ text: contextText }] },
-    ]);
+    ]).catch((err) => {
+      // Gemini down mid-conversation: never 500 into a dead end.
+      // Ask the default question (quota permitting) or finish deterministically.
+      const message = err instanceof Error ? err.message : String(err);
+      const lastQ = questionsAsked[questionsAsked.length - 1];
+      if (questionsAsked.length < MAX_QUESTIONS && lastQ !== DEFAULT_QUESTION) {
+        return JSON.stringify({
+          needs_more_info: true,
+          question: DEFAULT_QUESTION,
+          question_focus: `${DEFAULT_QUESTION_FOCUS} (fallback_after_error: ${message.slice(0, 120)})`,
+        });
+      }
+      return JSON.stringify({ needs_more_info: false });
+    });
 
     let parsed: {
       needs_more_info: boolean;
@@ -175,6 +189,12 @@ Apakah kamu sudah memiliki cukup konteks untuk menghasilkan clinical insight?
     // Force completion if max questions reached
     if (questionsAsked.length >= MAX_QUESTIONS) {
       parsed.needs_more_info = false;
+    }
+
+    // Guard: `needs_more_info` without a question strands the caregiver.
+    if (parsed.needs_more_info && !parsed.question) {
+      parsed.question = DEFAULT_QUESTION;
+      parsed.question_focus = DEFAULT_QUESTION_FOCUS;
     }
 
     if (parsed.needs_more_info && parsed.question) {

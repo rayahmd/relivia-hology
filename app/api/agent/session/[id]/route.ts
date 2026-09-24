@@ -59,11 +59,18 @@ export async function GET(
     const changes =
       (session.current_context as { changes?: unknown[] })?.changes ?? [];
 
+    // Sessions abandoned (stale investigating) or cancelled by the caregiver
+    // resolve to `completed` without an insight — flag them so the UI can
+    // say so instead of rendering an empty completed state.
+    const history = (session.analysis_history ?? []) as Array<Record<string, unknown>>;
+    const cancelled = history.some((h) => h?.abandoned === true || h?.cancelled === true);
+
     return NextResponse.json({
       session: {
         id: session.id,
         patient_id: session.patient_id,
         status: session.status,
+        cancelled,
         trigger: session.trigger,
         questions_count: questions.length,
         max_questions: 3,

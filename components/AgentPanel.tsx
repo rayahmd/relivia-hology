@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { ClinicalInsight } from "@/lib/types";
 
 type AgentStatus =
@@ -10,6 +10,7 @@ type AgentStatus =
   | "waiting_for_caregiver"
   | "reanalyzing"
   | "completed"
+  | "cancelled"
   | "no_change"
   | "error";
 
@@ -26,11 +27,16 @@ type ChangeResult = {
 type SessionPayload = {
   id: string;
   status: string;
+  cancelled?: boolean;
   questions_count: number;
   max_questions: number;
   last_question: string | null;
   changes: ChangeResult[];
 };
+
+/** Bounded re-poll for a session stuck in `investigating` — never spin forever. */
+const INVESTIGATING_POLLS = 6;
+const INVESTIGATING_POLL_MS = 5000;
 
 /**
  * AgentPanel — automatic-first (PRD §26–§27, §37).
@@ -60,8 +66,17 @@ export default function AgentPanel({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [generatingBrief, setGeneratingBrief] = useState(false);
   const [questionsCount, setQuestionsCount] = useState(0);
+  const pollCount = useRef(0);
+  const pollTimer = useRef<number | null>(null);
+  const answeringRef = useRef(false);
 
-  const loadSession = useCallback(async (id: string) => {
+  // Poll timers must never outlive the panel.
+  useEffect(() => () => {
+    if (pollTimer.current) window.clearTimeout(pollTimer.current);
+  }, []);
+
+  const loadSession = useCallback(async (id: string, resetPoll = false) => {
+    if (resetPoll) pollCount.current = 0;
     setStatus("loading_session");
     setErrorMsg(null);
     try {
@@ -73,6 +88,7 @@ export default function AgentPanel({
       setSessionId(s.id);
       setChanges(s.changes ?? []);
       setQuestionsCount(s.questions_count ?? 0);
+      pollCount.current = 0;
 
       if (s.status === "waiting_for_caregiver" && s.last_question) {
         setQuestion(s.last_question);
@@ -80,9 +96,22 @@ export default function AgentPanel({
       } else if (s.status === "completed" && json.insight) {
         setInsight(json.insight);
         setStatus("completed");
+      } else if (s.status === "completed") {
+        // Cancelled/abandoned: completed without an insight.
+        setStatus("cancelled");
       } else {
-        // Still investigating (e.g. agent retry after Gemini outage) — poll state.
-        setStatus("investigating");
+        // Still investigating — re-poll a bounded number of times, then
+        // surface recovery actions instead of spinning forever.
+        if (pollCount.current < INVESTIGATING_POLLS) {
+          pollCount.current += 1;
+          setStatus("investigating");
+          if (pollTimer.current) window.clearTimeout(pollTimer.current);
+          pollTimer.current = window.setTimeout(() => loadSession(id), INVESTIGATING_POLL_MS);
+        } else {
+          pollCount.current = 0;
+          setErrorMsg("Analisis tidak kunjung selesai — sesi ini kemungkinan macet. Kamu bisa membatalkan sesi atau memulai investigasi baru.");
+          setStatus("error");
+        }
       }
     } catch (e) {
       setErrorMsg(String(e instanceof Error ? e.message : e));
@@ -124,6 +153,8 @@ export default function AgentPanel({
     setQuestion(null);
     setSessionId(null);
     setQuestionsCount(0);
+    pollCount.current = 0;
+    if (pollTimer.current) window.clearTimeout(pollTimer.current);
 
     try {
       const res = await fetch("/api/agent/investigate", {
@@ -155,14 +186,41 @@ export default function AgentPanel({
         setInsight(json.insight);
         setStatus("completed");
       }
+
+      if (json.status === "investigating" && json.session_id) {
+        // Fresh session still working (e.g. auto-pipeline race) — resume
+        // it through the bounded poll instead of hanging the spinner.
+        await loadSession(json.session_id, true);
+      }
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : String(e));
       setStatus("error");
     }
   }
 
+  async function cancelSession() {
+    if (pollTimer.current) window.clearTimeout(pollTimer.current);
+    pollCount.current = 0;
+    if (sessionId) {
+      try {
+        await fetch(`/api/agent/session/${sessionId}/cancel`, { method: "POST" });
+      } catch {
+        /* offline — still reset locally */
+      }
+    }
+    setSessionId(null);
+    setInsight(null);
+    setBrief(null);
+    setQuestion(null);
+    setChanges([]);
+    setQuestionsCount(0);
+    setErrorMsg(null);
+    setStatus("idle");
+  }
+
   async function submitAnswer(ans: string) {
-    if (!sessionId) return;
+    if (!sessionId || answeringRef.current) return;
+    answeringRef.current = true;
     setStatus("reanalyzing");
     setAnswer("");
 
@@ -190,6 +248,8 @@ export default function AgentPanel({
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : String(e));
       setStatus("error");
+    } finally {
+      answeringRef.current = false;
     }
   }
 
@@ -276,7 +336,7 @@ export default function AgentPanel({
             ))}
           </div>
           {status === "investigating" && sessionId && (
-            <button onClick={() => loadSession(sessionId)} className="mt-6 text-sm text-soft hover:text-ink font-semibold">
+            <button onClick={() => loadSession(sessionId, true)} className="mt-6 text-sm text-soft hover:text-ink font-semibold">
               Muat ulang status
             </button>
           )}
@@ -491,6 +551,20 @@ export default function AgentPanel({
         </div>
       )}
 
+      {/* ── Status: Cancelled ──────────────────────── */}
+      {status === "cancelled" && (
+        <div className="card p-8 text-center">
+          <h3 className="font-extrabold text-xl mb-2">Sesi Dibatalkan</h3>
+          <p className="text-soft text-sm mb-6 max-w-[380px] mx-auto leading-relaxed">
+            Sesi investigasi ini telah dibatalkan dan tidak memblokir analisis berikutnya. Mulai investigasi baru kapan pun dibutuhkan.
+          </p>
+          <div className="flex gap-2 justify-center">
+            <button onClick={startInvestigation} className="btn-primary">Mulai Investigasi Baru</button>
+            <button onClick={() => setStatus("idle")} className="text-sm text-soft hover:text-ink font-semibold px-4 py-2">Kembali</button>
+          </div>
+        </div>
+      )}
+
       {/* ── Error (PRD §31) ────────────────────────── */}
       {status === "error" && errorMsg && (
         <div className="card p-6">
@@ -499,9 +573,12 @@ export default function AgentPanel({
               ? "Agent analysis unavailable. Please try again later."
               : errorMsg}
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             {sessionId && (
-              <button onClick={() => loadSession(sessionId)} className="btn-primary">Coba lagi</button>
+              <button onClick={() => loadSession(sessionId, true)} className="btn-primary">Coba lagi</button>
+            )}
+            {sessionId && (
+              <button onClick={cancelSession} className="text-sm text-soft hover:text-ink font-semibold px-4 py-2">Batalkan sesi</button>
             )}
             <button onClick={() => setStatus("idle")} className="text-sm text-soft hover:text-ink font-semibold px-4 py-2">Kembali</button>
           </div>

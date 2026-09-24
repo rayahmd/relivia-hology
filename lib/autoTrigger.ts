@@ -1,9 +1,14 @@
 import { runChangeDetection, hasSignificantChange } from "@/lib/changeDetection";
 import {
+  DEFAULT_QUESTION,
+  DEFAULT_QUESTION_FOCUS,
   callGeminiInvestigate,
   parseAgentDecision,
 } from "@/lib/agentCore";
 import type { NotificationType } from "@/lib/notify";
+
+/** An `investigating` session older than this never resolves — treat as dead. */
+export const STALE_INVESTIGATING_MS = 15 * 60 * 1000;
 
 /**
  * Automatic monitoring pipeline (PRD §13–§17, §23–§24).
@@ -42,13 +47,30 @@ export async function findActiveSession(
 ): Promise<any | null> {
   const { data } = await supabase
     .from("agent_sessions")
-    .select("id, status")
+    .select("id, status, questions_asked, caregiver_responses, current_context, analysis_history, updated_at")
     .eq("patient_id", patientId)
     .in("status", ["investigating", "waiting_for_caregiver"])
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  return data ?? null;
+  if (!data) return null;
+  // A stale `investigating` session (Gemini died mid-flight) is dead:
+  // abandon it so it can never block the pipeline forever.
+  if (data.status === "investigating" && Date.now() - new Date(data.updated_at).getTime() > STALE_INVESTIGATING_MS) {
+    await supabase
+      .from("agent_sessions")
+      .update({
+        status: "completed",
+        analysis_history: [
+          ...((data.analysis_history ?? []) as unknown[]),
+          { abandoned: true, reason: "stale_investigating_session" },
+        ],
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", data.id);
+    return null;
+  }
+  return data;
 }
 
 export async function runAutomaticPipeline(
@@ -183,12 +205,16 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
   try {
     rawResponse = await callGeminiInvestigate(contextText);
   } catch (err) {
-    // PRD §31 strict: record the failure, keep investigating, no fake insight.
+    // PRD §31 strict, without wedging: record the failure but keep the
+    // investigation alive via the default question — a session parked in
+    // `investigating` would spin the UI spinner forever and block dedup.
     const message = err instanceof Error ? err.message : String(err);
     await supabase
       .from("agent_sessions")
       .update({
-        analysis_history: [{ round: 1, error: "Agent analysis unavailable", detail: message }],
+        analysis_history: [{ round: 1, error: "Agent analysis unavailable", detail: message, fallback_question: DEFAULT_QUESTION }],
+        status: "waiting_for_caregiver",
+        questions_asked: [DEFAULT_QUESTION],
         updated_at: new Date().toISOString(),
       })
       .eq("id", session.id);
@@ -196,13 +222,18 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
       detected: true,
       changes: changeResults,
       sessionId: session.id,
-      notification: null,
-      skippedReason: "agent_unavailable",
-      agentError: "Agent analysis unavailable. Please try again later.",
+      notification: { type: "agent_question", sessionId: session.id },
     };
   }
 
   const parsed = parseAgentDecision(rawResponse);
+
+  // Guard: `completed` without an insight object strands the caregiver.
+  if (!parsed.needs_more_info && !parsed.insight) {
+    parsed.needs_more_info = true;
+    parsed.question = parsed.question ?? DEFAULT_QUESTION;
+    parsed.question_focus = parsed.question_focus ?? DEFAULT_QUESTION_FOCUS;
+  }
 
   await supabase
     .from("agent_sessions")

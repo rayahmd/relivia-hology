@@ -3,9 +3,12 @@ import { createClient } from "@/lib/supabase/server";
 import { runChangeDetection, hasSignificantChange } from "@/lib/changeDetection";
 import {
   AGENT_SYSTEM_PROMPT,
+  DEFAULT_QUESTION,
+  DEFAULT_QUESTION_FOCUS,
   callGeminiInvestigate,
   parseAgentDecision,
 } from "@/lib/agentCore";
+import { findActiveSession, STALE_INVESTIGATING_MS } from "@/lib/autoTrigger";
 
 // Re-exported for documentation; the prompt lives in lib/agentCore.ts so the
 // manual and automatic pipelines share one source of truth (PRD §16).
@@ -31,6 +34,47 @@ export async function POST(req: NextRequest) {
       .eq("caregiver_id", user.id)
       .single();
     if (!patient) return NextResponse.json({ error: "Patient not found" }, { status: 404 });
+
+    // Dedup: resume a live session instead of spawning duplicates.
+    // A stale `investigating` session (Gemini died mid-flight) is abandoned
+    // so it can never wedge the agent in "analyzing" forever.
+    const active = await findActiveSession(supabase, patientId);
+    if (active) {
+      if (active.status === "waiting_for_caregiver") {
+        const qs: string[] = active.questions_asked ?? [];
+        const ctx = (active.current_context ?? {}) as { changes?: unknown[] };
+        return NextResponse.json({
+          status: "waiting_for_caregiver",
+          session_id: active.id,
+          question: qs.length > 0 ? qs[qs.length - 1] : DEFAULT_QUESTION,
+          question_focus: "resumed_session",
+          changes: ctx.changes ?? [],
+        });
+      }
+      if (active.status === "investigating") {
+        const ageMs = Date.now() - new Date(active.updated_at).getTime();
+        if (ageMs > STALE_INVESTIGATING_MS) {
+          await supabase
+            .from("agent_sessions")
+            .update({
+              status: "completed",
+              analysis_history: [
+                ...((active.analysis_history ?? []) as unknown[]),
+                { abandoned: true, reason: "stale_investigating_session" },
+              ],
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", active.id);
+        } else {
+          const ctx = (active.current_context ?? {}) as { changes?: unknown[] };
+          return NextResponse.json({
+            status: "investigating",
+            session_id: active.id,
+            changes: ctx.changes ?? [],
+          });
+        }
+      }
+    }
 
     // Fetch recent health data (last 3 days)
     const { data: healthData } = await supabase
@@ -157,9 +201,43 @@ Catatan: ${todayCheckin.free_text_note ?? "-"}`
 Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untuk menghasilkan clinical insight?
 `;
 
-    const rawResponse = await callGeminiInvestigate(contextText);
+    let rawResponse: string;
+    try {
+      rawResponse = await callGeminiInvestigate(contextText);
+    } catch (err) {
+      // Gemini down → graceful degradation: continue with the default
+      // question instead of leaving the session stuck in `investigating`.
+      const message = err instanceof Error ? err.message : String(err);
+      await supabase
+        .from("agent_sessions")
+        .update({
+          analysis_history: [
+            { round: 1, error: "Agent analysis unavailable", detail: message, fallback_question: DEFAULT_QUESTION },
+          ],
+          status: "waiting_for_caregiver",
+          questions_asked: [DEFAULT_QUESTION],
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", session.id);
+      return NextResponse.json({
+        status: "waiting_for_caregiver",
+        session_id: session.id,
+        question: DEFAULT_QUESTION,
+        question_focus: DEFAULT_QUESTION_FOCUS,
+        changes: changeResults,
+        fallback: true,
+      });
+    }
 
     const parsed = parseAgentDecision(rawResponse);
+
+    // Guard: a `completed` verdict without an insight object would strand
+    // the caregiver (no question rendered). Degrade to the default question.
+    if (!parsed.needs_more_info && !parsed.insight) {
+      parsed.needs_more_info = true;
+      parsed.question = parsed.question ?? DEFAULT_QUESTION;
+      parsed.question_focus = parsed.question_focus ?? DEFAULT_QUESTION_FOCUS;
+    }
 
     // Update session with analysis
     await supabase
