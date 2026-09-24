@@ -22,12 +22,21 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  const { data: { user } } = await supabase.auth.getUser();
+  // Auth check tanpa network roundtrip: getClaims() memverifikasi JWT
+  // secara lokal dari cookie (0 RTT saat token valid; refresh otomatis
+  // hanya bila expired). Sebelumnya getUser() memanggil Auth server di
+  // SETIAP navigasi protected (+ onboarding query sesudahnya) sehingga
+  // tiap pindah halaman membayar 2 roundtrip serial (~0.5–1s+ di mobile).
+  // Keamanan tidak berkurang: RLS Postgres tetap memverifikasi JWT per
+  // query, dan bila project memakai HS256 getClaims otomatis fallback ke
+  // getUser (perilaku lama). Server Components/API tetap memakai getUser.
+  const { data: claimsData } = await supabase.auth.getClaims();
+  const userId = claimsData?.claims?.sub as string | undefined;
 
   const authRequiredPaths = ["/dashboard", "/checkin", "/insight", "/summary", "/community", "/onboarding", "/agent", "/health"];
   const isAuthRequired = authRequiredPaths.some((p) => request.nextUrl.pathname.startsWith(p));
 
-  if (isAuthRequired && !user) {
+  if (isAuthRequired && !userId) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/login";
     return NextResponse.redirect(redirectUrl);
@@ -40,11 +49,11 @@ export async function middleware(request: NextRequest) {
   const onboardingRequiredPaths = ["/dashboard", "/checkin", "/insight", "/summary", "/community", "/agent", "/health"];
   const needsOnboardingCheck = onboardingRequiredPaths.some((p) => request.nextUrl.pathname.startsWith(p));
 
-  if (needsOnboardingCheck && user) {
+  if (needsOnboardingCheck && userId) {
     const { data: patient } = await supabase
       .from("patients")
       .select("age")
-      .eq("caregiver_id", user.id)
+      .eq("caregiver_id", userId)
       .maybeSingle();
 
     if (!patient || patient.age === null) {

@@ -10,8 +10,8 @@ export const dynamic = "force-dynamic";
 
 export default async function CommunityPage() {
   const supabase = createClient();
-  const profile = await getOrCreateProfile();
-  const patient = await getOrCreatePatient();
+  // profile dan patient independen → paralel, bukan 2x serial.
+  const [profile, patient] = await Promise.all([getOrCreateProfile(), getOrCreatePatient()]);
 
   const { data: postsRaw } = await supabase
     .from("community_posts")

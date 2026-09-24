@@ -175,14 +175,17 @@ export default function LoginPage() {
         password,
         options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
       });
-      setLoading(false);
 
       if (error) {
+        setLoading(false);
         setError(error.message);
         return;
       }
 
       // Session langsung ada kalau "Confirm email" nonaktif — masuk sekarang.
+      // loading SENGAJA tetap true sampai /dashboard tampil: kalau
+      // dimatikan di sini user menatap form statis selama fetch dashboard
+      // (±2s) dan mengira login macet.
       if (data.session) {
         sessionStorage.setItem("registered", "1");
         router.replace("/dashboard");
@@ -197,15 +200,15 @@ export default function LoginPage() {
         return;
       }
 
+      setLoading(false);
       setCheckEmail(true);
       return;
     }
 
     const { error } = await supabase.auth.signInWithPassword({ email, password });
 
-    setLoading(false);
-
     if (error) {
+      setLoading(false);
       setError(error.message);
       return;
     }

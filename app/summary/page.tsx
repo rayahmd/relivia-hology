@@ -10,39 +10,39 @@ export default async function SummaryPage() {
   const supabase = createClient();
   const patient = await getOrCreatePatient();
 
-  // Legacy insight
-  const { data: latest } = await supabase
-    .from("ai_insights")
-    .select("*")
-    .eq("patient_id", patient.id)
-    .order("generated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  // New agent insight
-  const { data: latestNew } = await supabase
-    .from("insights")
-    .select("*")
-    .eq("patient_id", patient.id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  // Latest consultation brief
-  const { data: latestBrief } = await supabase
-    .from("consultation_briefs")
-    .select("*")
-    .eq("patient_id", patient.id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const { data: checkinsRaw } = await supabase
-    .from("daily_checkins")
-    .select("*")
-    .eq("patient_id", patient.id)
-    .order("checkin_date", { ascending: false })
-    .limit(30);
+  const [{ data: latest }, { data: latestNew }, { data: latestBrief }, { data: checkinsRaw }] =
+    await Promise.all([
+      // Legacy insight
+      supabase
+        .from("ai_insights")
+        .select("*")
+        .eq("patient_id", patient.id)
+        .order("generated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      // New agent insight
+      supabase
+        .from("insights")
+        .select("*")
+        .eq("patient_id", patient.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      // Latest consultation brief
+      supabase
+        .from("consultation_briefs")
+        .select("*")
+        .eq("patient_id", patient.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("daily_checkins")
+        .select("*")
+        .eq("patient_id", patient.id)
+        .order("checkin_date", { ascending: false })
+        .limit(30),
+    ]);
 
   const checkins = ((checkinsRaw ?? []) as DailyCheckin[]).reverse();
   const insight = latest as AiInsight | null;

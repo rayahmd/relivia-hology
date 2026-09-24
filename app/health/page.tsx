@@ -13,19 +13,28 @@ export default async function HealthPage() {
   const patient = await getOrCreatePatient();
 
   const today = new Date().toISOString().slice(0, 10);
+  const thirtyDaysAgoDate = new Date();
+  thirtyDaysAgoDate.setDate(thirtyDaysAgoDate.getDate() - 30);
+  const thirtyDaysAgo = thirtyDaysAgoDate.toISOString().slice(0, 10);
 
-  // Fetch today's health data
-  const { data: todayData } = await supabase
-    .from("health_data")
-    .select("*")
-    .eq("patient_id", patient.id)
-    .eq("recorded_at", today);
-
-  // Fetch baselines
-  const { data: baselines } = await supabase
-    .from("baselines")
-    .select("*")
-    .eq("patient_id", patient.id);
+  // Tiga query independen dijalankan paralel, bukan 3x serial.
+  const [{ data: todayData }, { data: baselines }, { data: historyData }] = await Promise.all([
+    supabase
+      .from("health_data")
+      .select("*")
+      .eq("patient_id", patient.id)
+      .eq("recorded_at", today),
+    supabase
+      .from("baselines")
+      .select("*")
+      .eq("patient_id", patient.id),
+    supabase
+      .from("health_data")
+      .select("*")
+      .eq("patient_id", patient.id)
+      .gte("recorded_at", thirtyDaysAgo)
+      .order("recorded_at", { ascending: false }),
+  ]);
 
   const baselineMap: Record<string, { value: number }> = {};
   for (const b of baselines ?? []) {
@@ -54,16 +63,6 @@ export default async function HealthPage() {
       has_data: !!today_val,
     };
   });
-
-  // Fetch 30-day history
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  const { data: historyData } = await supabase
-    .from("health_data")
-    .select("*")
-    .eq("patient_id", patient.id)
-    .gte("recorded_at", thirtyDaysAgo.toISOString().slice(0, 10))
-    .order("recorded_at", { ascending: false });
 
   const hasData = (historyData ?? []).length > 0;
 

@@ -1,4 +1,3 @@
-import { createClient } from "@/lib/supabase/server";
 import { getOrCreatePatient } from "@/lib/getOrCreatePatient";
 import TopNav from "@/components/TopNav";
 import AgentPanel from "@/components/AgentPanel";
@@ -15,20 +14,12 @@ export default async function AgentPage({
 }: {
   searchParams: { session?: string };
 }) {
-  const supabase = createClient();
   const patient = await getOrCreatePatient();
 
-  // Check if there is a recent active session (kept for status display parity)
-  const { data: activeSession } = await supabase
-    .from("agent_sessions")
-    .select("id")
-    .eq("patient_id", patient.id)
-    .in("status", ["investigating", "waiting_for_caregiver"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  void activeSession;
+  // NOTE: tidak ada query tambahan di sini — AgentPanel memuat sesinya
+  // sendiri secara client-side setelah shell instan tampil. Query
+  // "activeSession" yang lama dihapus: hasilnya tidak dipakai (void) tapi
+  // memakan 1 roundtrip serial di setiap kunjungan /agent.
 
   return (
     <div className="min-h-screen flex flex-col">

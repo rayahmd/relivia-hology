@@ -10,21 +10,22 @@ export default async function InsightPage() {
   const supabase = createClient();
   const patient = await getOrCreatePatient();
 
-  const { data: latest } = await supabase
-    .from("ai_insights")
-    .select("*")
-    .eq("patient_id", patient.id)
-    .order("generated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const { data: latestNew } = await supabase
-    .from("insights")
-    .select("*")
-    .eq("patient_id", patient.id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const [{ data: latest }, { data: latestNew }] = await Promise.all([
+    supabase
+      .from("ai_insights")
+      .select("*")
+      .eq("patient_id", patient.id)
+      .order("generated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("insights")
+      .select("*")
+      .eq("patient_id", patient.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
 
   return (
     <div className="min-h-screen flex flex-col">
