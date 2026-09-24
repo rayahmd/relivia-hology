@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Image from "next/image";
+import { useAutoMonitor, type PendingNotification } from "@/components/AutoMonitorProvider";
 
 type HealthMetric = {
   metric: string;
@@ -64,6 +65,11 @@ export default function HealthDataCard({
   const [loadingBaseline, setLoadingBaseline] = useState(false);
   const [loadingChange, setLoadingChange] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const { pushNotification } = useAutoMonitor();
+  const simRunning = useRef(false);
+  // Salah satu tombol simulasi sedang berjalan → kunci keduanya agar
+  // tidak bisa di-spam (klik ganda = sesi ganda / pesan menyesatkan).
+  const simBusy = loadingBaseline || loadingChange;
 
   async function handleSync() {
     setSyncing(true);
@@ -80,6 +86,10 @@ export default function HealthDataCard({
   }
 
   async function loadDemoData(scenario: "baseline_week" | "change_day") {
+    // Guard sinkron (selain disabled tombol): klik ganda dalam satu frame
+    // sebelum re-render tidak akan menjalankan fetch dua kali.
+    if (simRunning.current) return;
+    simRunning.current = true;
     const setter = scenario === "baseline_week" ? setLoadingBaseline : setLoadingChange;
     setter(true);
     setMessage(null);
@@ -98,30 +108,50 @@ export default function HealthDataCard({
         // Refresh baseline calculation
         await fetch(`/api/patient/${patientId}/baseline`);
       } else {
-        // Hari perubahan: deteksi + analisis berjalan otomatis.
-        // Tampilkan notifikasi seperti yang dilakukan lapisan native.
-        if (json.notification?.sessionId) {
+        // Hari perubahan: deteksi + analisis berjalan otomatis di server.
+        // Kalau pipeline menghasilkan notifikasi, tampilkan banner in-app
+        // SEKARANG (tanpa menunggu poll 60 detik) + notifikasi OS.
+        const notif = json.notification as { type: PendingNotification["type"]; sessionId: string } | null;
+        if (notif?.sessionId) {
+          const sessionId = notif.sessionId;
+          pushNotification({
+            type: notif.type,
+            sessionId,
+            title: "Relivia",
+            body:
+              notif.type === "insight_ready"
+                ? "Relivia menemukan insight baru tentang pola pasien. Ketuk untuk melihat."
+                : "Perubahan pada pola pasien terdeteksi. Relivia membutuhkan konteks tambahan untuk melanjutkan analisis. Ketuk untuk melihat.",
+            deep_link: `/agent?session=${sessionId}`,
+            updated_at: new Date().toISOString(),
+          });
           try {
             const { notifyAgent } = await import("@/lib/nativeBridge");
-            await notifyAgent({
-              type: json.notification.type,
-              sessionId: json.notification.sessionId,
-            });
+            await notifyAgent({ type: notif.type, sessionId });
           } catch {
-            /* in-app banner via AutoMonitorProvider polling covers this */
+            /* banner in-app di atas sudah cukup */
           }
+          setMessage(
+            `✅ Perubahan terdeteksi — notifikasi sudah muncul, ketuk untuk melihat di halaman Asisten.`
+          );
+        } else if (json.agentSessionId) {
+          // Dedup backend (sesi masih aktif): tidak ada notif baru yang
+          // dibuat — arahkan ke sesi yang sudah ada, jangan klaim sesi baru.
+          setMessage(
+            `✅ Perubahan tercatat. Sesi pendalaman masih aktif — buka halaman Asisten untuk melanjutkan.`
+          );
+        } else {
+          setMessage(
+            `✅ Contoh data perubahan hari ini berhasil dimuat. Muat ulang untuk melihat perubahannya.`
+          );
         }
-        setMessage(
-          json.agentSessionId
-            ? `✅ Perubahan terdeteksi otomatis — sesi pendalaman dibuat. Buka halaman Asisten untuk melihat pertanyaan Relivia.`
-            : `✅ Contoh data perubahan hari ini berhasil dimuat. Muat ulang untuk melihat perubahannya.`
-        );
         await fetch(`/api/patient/${patientId}/baseline`);
       }
     } catch (e) {
       setMessage(String(e));
     } finally {
       setter(false);
+      simRunning.current = false;
     }
   }
 
@@ -205,14 +235,14 @@ export default function HealthDataCard({
         <div className="flex flex-col gap-2.5">
           <button
             onClick={() => loadDemoData("baseline_week")}
-            disabled={loadingBaseline}
+            disabled={simBusy}
             className="w-full text-[13px] font-bold px-4 py-2.5 rounded-full bg-[#F9C6DD] text-[#6D28D9] hover:brightness-95 transition disabled:opacity-60"
           >
             {loadingBaseline ? "Memuat…" : "Seed 7 Hari Baseline"}
           </button>
           <button
             onClick={() => loadDemoData("change_day")}
-            disabled={loadingChange}
+            disabled={simBusy}
             className="w-full text-[13px] font-bold px-4 py-2.5 rounded-full bg-[#FFF1C1] text-[#6D28D9] hover:brightness-95 transition disabled:opacity-60"
           >
             {loadingChange ? "Memuat…" : "Simulasi Hari Perubahan"}

@@ -224,6 +224,7 @@ export async function PUT(req: NextRequest) {
           detected: pipeline?.detected ?? false,
           agentSessionId: pipeline?.sessionId ?? null,
           notification: pipeline?.notification ?? null,
+          ...(pipeline?.skippedReason ? { skipped: pipeline.skippedReason } : {}),
           ...(pipeline?.agentError ? { agentError: pipeline.agentError } : {}),
         });
       }

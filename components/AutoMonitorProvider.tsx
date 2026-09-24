@@ -26,6 +26,13 @@ type MonitorContext = {
   /** Latest undismissed notification (trigger only, PRD §21). */
   pending: PendingNotification | null;
   dismiss: () => void;
+  /**
+   * Tampilkan banner notifikasi SEGERA (tanpa menunggu poll 60 detik).
+   * Dipakai mis. tombol "Simulasi Hari Perubahan" yang sudah tahu
+   * sessionId dari respons API. Dedup key sama seperti poll sehingga
+   * poll berikutnya tidak menampilkannya dua kali.
+   */
+  pushNotification: (n: PendingNotification) => void;
   /** Flush offline queue on demand; returns remaining count. */
   flushQueue: () => Promise<number>;
   queueRemaining: number;
@@ -36,6 +43,7 @@ type MonitorContext = {
 const Ctx = createContext<MonitorContext>({
   pending: null,
   dismiss: () => {},
+  pushNotification: () => {},
   flushQueue: async () => 0,
   queueRemaining: 0,
   monitoringActive: false,
@@ -86,6 +94,17 @@ export default function AutoMonitorProvider({ children }: { children: ReactNode 
   const seenRef = useRef<Set<string> | null>(null);
 
   const dismiss = useCallback(() => setPending(null), []);
+
+  const pushNotification = useCallback((n: PendingNotification) => {
+    if (seenRef.current === null) seenRef.current = loadSeen();
+    const key = `${n.type}:${n.sessionId}`;
+    // Sudah pernah ditampilkan (mis. dari simulasi sebelumnya) → jangan
+    // spam banner yang sama berulang-ulang.
+    if (seenRef.current.has(key)) return;
+    seenRef.current.add(key);
+    saveSeen(seenRef.current);
+    setPending(n);
+  }, []);
 
   const flushQueue = useCallback(async () => {
     try {
@@ -229,7 +248,7 @@ export default function AutoMonitorProvider({ children }: { children: ReactNode 
 
   return (
     <Ctx.Provider
-      value={{ pending, dismiss, flushQueue, queueRemaining, monitoringActive, setMonitoringActive: setActive }}
+      value={{ pending, dismiss, pushNotification, flushQueue, queueRemaining, monitoringActive, setMonitoringActive: setActive }}
     >
       {children}
       {pending && (

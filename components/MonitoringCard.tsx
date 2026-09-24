@@ -116,6 +116,9 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
   }
 
   async function handleConnect() {
+    // Sudah terhubung → abaikan (tombol juga disabled, ini lapis kedua
+    // anti-spam agar koneksi/background-sync tidak dijadwalkan ulang).
+    if (monitoringActive) return;
     setBusy(true);
     setMessage(null);
     setShowSettingsFallback(false);
@@ -234,10 +237,10 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
         <div className="flex flex-col gap-2">
           <button
             onClick={handleConnect}
-            disabled={busy}
+            disabled={busy || monitoringActive}
             className="text-[12px] font-bold px-4 py-2 rounded-full bg-[#F9C6DD] text-[#6D28D9] hover:brightness-95 transition disabled:opacity-60 text-left"
           >
-            {busy ? "Menghubungkan…" : "Hubungkan Health Connect"}
+            {busy ? "Menghubungkan…" : monitoringActive ? "Health Connect Terhubung" : "Hubungkan Health Connect"}
           </button>
         </div>
 
