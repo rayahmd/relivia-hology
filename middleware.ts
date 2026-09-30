@@ -35,11 +35,22 @@ export async function middleware(request: NextRequest) {
 
   const pathname = request.nextUrl.pathname;
 
+  // No landing page (mobile-app focus): "/" always resolves into the app.
+  // Logged-in users go to /dashboard; guests go to /login. The ?code=
+  // exception preserves the OAuth safety net (Supabase sometimes returns
+  // the auth code to the Site URL root — /auth/callback exchange must run).
+  if (pathname === "/") {
+    if (!userId && request.nextUrl.searchParams.has("code")) return response;
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = userId ? "/dashboard" : "/login";
+    return NextResponse.redirect(redirectUrl);
+  }
+
   // User yang sudah login tidak boleh melihat /login sedetik pun:
   // tendang ke /dashboard di server (sebelum HTML login terkirim).
   // Gate onboarding di bawah / di /dashboard akan meneruskan ke
   // /onboarding bila perlu — tetap tanpa paint halaman login.
-  if (userId && (pathname === "/login" || pathname === "/")) {
+  if (userId && pathname === "/login") {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/dashboard";
     return NextResponse.redirect(redirectUrl);

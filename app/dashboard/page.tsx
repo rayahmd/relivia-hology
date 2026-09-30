@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getOrCreatePatient } from "@/lib/getOrCreatePatient";
+import { getOrCreateProfile } from "@/lib/getOrCreateProfile";
 import TopNav from "@/components/TopNav";
 import MonitoringChart from "@/components/MonitoringChart";
 import Calendar from "@/components/Calendar";
@@ -12,7 +13,8 @@ export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const supabase = createClient();
-  const patient = await getOrCreatePatient();
+  // Greeting menyapa caregiver (pemakai aplikasi), bukan pasien.
+  const [patient, profile] = await Promise.all([getOrCreatePatient(), getOrCreateProfile()]);
   const today = new Date().toISOString().slice(0, 10);
 
   // Independent queries dijalankan paralel (satu round-trip batch),
@@ -113,7 +115,7 @@ export default async function DashboardPage() {
         <div className="pt-2 pb-1">
           <p className="text-sm font-bold text-[#8B5CF6] tracking-tight">{timeGreeting}</p>
           <h1 className="text-3xl sm:text-4xl font-extrabold text-[#7C3AED] tracking-tight mt-0.5">
-            {patient.name}
+            {profile.display_name}
           </h1>
         </div>
 
