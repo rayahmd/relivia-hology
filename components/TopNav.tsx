@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
-import { IconHome, IconEdit, IconFlame, IconSparkle, IconAlertTriangle, IconFileText, IconUsers } from "@/components/Icons";
+import { IconHome, IconEdit, IconFlame, IconSparkle, IconAlertTriangle, IconFileText, IconUsers, IconUser } from "@/components/Icons";
 import Logo from "@/components/Logo";
 import SosButton from "@/components/SosButton";
 
@@ -17,6 +17,7 @@ const items = [
   { href: "/insight", label: "Insight", Icon: IconAlertTriangle },
   { href: "/summary", label: "Ringkasan", Icon: IconFileText },
   { href: "/community", label: "Komunitas", Icon: IconUsers },
+  { href: "/profile", label: "Profil", Icon: IconUser },
 ];
 
 export default function TopNav({ patientName, patientAge }: { patientName: string; patientAge?: number | null }) {

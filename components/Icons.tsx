@@ -79,13 +79,21 @@ export function IconMoon({ size = 16, className }: IconProps) {
   );
 }
 
-export function IconUsers({ size = 16, className }: IconProps) {
-  return (
+export function IconUsers({ size = 16, className }: IconProps) {  return (
     <svg width={size} height={size} viewBox="0 0 24 24" {...base} className={className}>
       <circle cx="9" cy="8.5" r="2.8" />
       <path d="M4 19c0-3 2.2-5.3 5-5.3s5 2.3 5 5.3" strokeLinecap="round" />
       <circle cx="17" cy="9.5" r="2.1" />
       <path d="M15.3 13.6c1.9.3 3.4 2.2 3.7 4.9" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function IconUser({ size = 16, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...base} className={className}>
+      <circle cx="12" cy="8" r="3.2" />
+      <path d="M5.5 19.5c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" strokeLinecap="round" />
     </svg>
   );
 }

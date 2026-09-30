@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { DEFAULT_QUESTION, DEFAULT_QUESTION_FOCUS } from "@/lib/agentCore";
+import { DEFAULT_QUESTION, DEFAULT_QUESTION_FOCUS, getFallbackAnswerOptions, normalizeAnswerOptions } from "@/lib/agentCore";
 
 const GEMINI_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent";
@@ -24,8 +24,15 @@ If you need ONE more question (and fewer than 3 have been asked):
 {
   "needs_more_info": true,
   "question": "Focused question in Bahasa Indonesia",
-  "question_focus": "what gap this addresses"
+  "question_focus": "what gap this addresses",
+  "answer_options": ["option 1 in Bahasa Indonesia", "option 2", "option 3"]
 }
+
+RULES FOR answer_options: 2-4 short options (max ~40 chars), each directly
+answering THIS question (sleep→sleep answers, medication→medication
+answers, never one generic template). Natural, non-leading; include an
+uncertainty option ("Tidak terlalu yakin") when it fits. Free-text answers
+are always allowed, options are shortcuts.
 
 If you have enough information:
 {
@@ -121,6 +128,7 @@ export async function POST(req: NextRequest) {
         severity: string;
       }>;
       todayCheckin?: Record<string, unknown>;
+      question_options?: string[][];
     };
 
     const qaHistory = questionsAsked
@@ -160,6 +168,7 @@ Apakah kamu sudah memiliki cukup konteks untuk menghasilkan clinical insight?
           needs_more_info: true,
           question: DEFAULT_QUESTION,
           question_focus: `${DEFAULT_QUESTION_FOCUS} (fallback_after_error: ${message.slice(0, 120)})`,
+          answer_options: getFallbackAnswerOptions(DEFAULT_QUESTION, DEFAULT_QUESTION_FOCUS),
         });
       }
       return JSON.stringify({ needs_more_info: false });
@@ -169,6 +178,7 @@ Apakah kamu sudah memiliki cukup konteks untuk menghasilkan clinical insight?
       needs_more_info: boolean;
       question?: string;
       question_focus?: string;
+      answer_options?: string[];
       insight?: {
         summary: string;
         detected_changes: string[];
@@ -200,6 +210,7 @@ Apakah kamu sudah memiliki cukup konteks untuk menghasilkan clinical insight?
     if (parsed.needs_more_info && parsed.question) {
       // Ask one more question
       const updatedQuestions = [...questionsAsked, parsed.question];
+      const newOptions = normalizeAnswerOptions(parsed.answer_options, parsed.question, parsed.question_focus);
 
       await supabase
         .from("agent_sessions")
@@ -207,6 +218,10 @@ Apakah kamu sudah memiliki cukup konteks untuk menghasilkan clinical insight?
           status: "waiting_for_caregiver",
           questions_asked: updatedQuestions,
           caregiver_responses: updatedResponses,
+          current_context: {
+            ...(ctx ?? {}),
+            question_options: [...(ctx.question_options ?? []), newOptions],
+          },
           analysis_history: [
             ...(session.analysis_history ?? []),
             { round: updatedQuestions.length, question: parsed.question, context: contextText },
@@ -220,6 +235,7 @@ Apakah kamu sudah memiliki cukup konteks untuk menghasilkan clinical insight?
         session_id,
         question: parsed.question,
         question_focus: parsed.question_focus,
+        answer_options: newOptions,
         questions_count: updatedQuestions.length,
       });
     }

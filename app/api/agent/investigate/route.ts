@@ -6,6 +6,7 @@ import {
   DEFAULT_QUESTION,
   DEFAULT_QUESTION_FOCUS,
   callGeminiInvestigate,
+  getFallbackAnswerOptions,
   parseAgentDecision,
 } from "@/lib/agentCore";
 import { findActiveSession, STALE_INVESTIGATING_MS } from "@/lib/autoTrigger";
@@ -42,12 +43,15 @@ export async function POST(req: NextRequest) {
     if (active) {
       if (active.status === "waiting_for_caregiver") {
         const qs: string[] = active.questions_asked ?? [];
-        const ctx = (active.current_context ?? {}) as { changes?: unknown[] };
+        const ctx = (active.current_context ?? {}) as { changes?: unknown[]; question_options?: string[][] };
+        const lastQ = qs.length > 0 ? qs[qs.length - 1] : DEFAULT_QUESTION;
+        const stored = ctx.question_options?.[qs.length - 1];
         return NextResponse.json({
           status: "waiting_for_caregiver",
           session_id: active.id,
-          question: qs.length > 0 ? qs[qs.length - 1] : DEFAULT_QUESTION,
+          question: lastQ,
           question_focus: "resumed_session",
+          answer_options: stored && stored.length >= 2 ? stored : getFallbackAnswerOptions(lastQ),
           changes: ctx.changes ?? [],
         });
       }
@@ -208,6 +212,7 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
       // Gemini down → graceful degradation: continue with the default
       // question instead of leaving the session stuck in `investigating`.
       const message = err instanceof Error ? err.message : String(err);
+      const fallbackOptions = getFallbackAnswerOptions(DEFAULT_QUESTION, DEFAULT_QUESTION_FOCUS);
       await supabase
         .from("agent_sessions")
         .update({
@@ -216,6 +221,12 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
           ],
           status: "waiting_for_caregiver",
           questions_asked: [DEFAULT_QUESTION],
+          current_context: {
+            changes: changeResults,
+            todayCheckin: todayCheckin ?? null,
+            baselines: baselineMap,
+            question_options: [fallbackOptions],
+          },
           updated_at: new Date().toISOString(),
         })
         .eq("id", session.id);
@@ -224,6 +235,7 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
         session_id: session.id,
         question: DEFAULT_QUESTION,
         question_focus: DEFAULT_QUESTION_FOCUS,
+        answer_options: fallbackOptions,
         changes: changeResults,
         fallback: true,
       });
@@ -248,6 +260,12 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
           ? {
               status: "waiting_for_caregiver",
               questions_asked: [parsed.question],
+              current_context: {
+                changes: changeResults,
+                todayCheckin: todayCheckin ?? null,
+                baselines: baselineMap,
+                question_options: [parsed.answer_options ?? getFallbackAnswerOptions(parsed.question ?? "", parsed.question_focus)],
+              },
             }
           : { status: "completed" }),
         updated_at: new Date().toISOString(),
@@ -291,6 +309,7 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
       session_id: session.id,
       question: parsed.question,
       question_focus: parsed.question_focus,
+      answer_options: parsed.answer_options,
       changes: changeResults,
     });
   } catch (err) {

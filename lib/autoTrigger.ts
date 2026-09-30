@@ -3,6 +3,7 @@ import {
   DEFAULT_QUESTION,
   DEFAULT_QUESTION_FOCUS,
   callGeminiInvestigate,
+  getFallbackAnswerOptions,
   parseAgentDecision,
 } from "@/lib/agentCore";
 import type { NotificationType } from "@/lib/notify";
@@ -215,6 +216,13 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
         analysis_history: [{ round: 1, error: "Agent analysis unavailable", detail: message, fallback_question: DEFAULT_QUESTION }],
         status: "waiting_for_caregiver",
         questions_asked: [DEFAULT_QUESTION],
+        current_context: {
+          changes: changeResults,
+          todayCheckin: todayCheckin ?? null,
+          baselines: baselineMap,
+          triggeredBy: "automatic_health_sync",
+          question_options: [getFallbackAnswerOptions(DEFAULT_QUESTION, DEFAULT_QUESTION_FOCUS)],
+        },
         updated_at: new Date().toISOString(),
       })
       .eq("id", session.id);
@@ -240,7 +248,17 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
     .update({
       analysis_history: [{ round: 1, response: parsed, context: contextText }],
       ...(parsed.needs_more_info
-        ? { status: "waiting_for_caregiver", questions_asked: [parsed.question] }
+        ? {
+            status: "waiting_for_caregiver",
+            questions_asked: [parsed.question],
+            current_context: {
+              changes: changeResults,
+              todayCheckin: todayCheckin ?? null,
+              baselines: baselineMap,
+              triggeredBy: "automatic_health_sync",
+              question_options: [parsed.answer_options ?? getFallbackAnswerOptions(parsed.question ?? "", parsed.question_focus)],
+            },
+          }
         : { status: "completed" }),
       updated_at: new Date().toISOString(),
     })

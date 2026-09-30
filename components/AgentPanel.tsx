@@ -31,12 +31,24 @@ type SessionPayload = {
   questions_count: number;
   max_questions: number;
   last_question: string | null;
+  last_options: string[] | null;
   changes: ChangeResult[];
 };
 
 /** Bounded re-poll for a session stuck in `investigating` — never spin forever. */
 const INVESTIGATING_POLLS = 6;
 const INVESTIGATING_POLL_MS = 5000;
+
+/**
+ * Last-resort static options, used only when the server returns no
+ * contextual answer_options (e.g. legacy responses). Normal path always
+ * renders per-question options from the agent.
+ */
+const QUICK_REPLIES_FALLBACK = [
+  "Ya, lebih sering dari biasanya",
+  "Tidak, masih normal",
+  "Tidak terlalu yakin",
+];
 
 /**
  * AgentPanel — automatic-first (PRD §26–§27, §37).
@@ -56,9 +68,16 @@ export default function AgentPanel({
   patientName: string;
   initialSessionId?: string | null;
 }) {
-  const [status, setStatus] = useState<AgentStatus>("idle");
+  // Start in a loading state, never in `idle`: the auto-resume below resolves
+  // the real state asynchronously, and rendering the idle empty card first
+  // is what flashed "Belum Ada Investigasi Aktif" on every mount/refresh.
+  const [status, setStatus] = useState<AgentStatus>("loading_session");
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId ?? null);
   const [question, setQuestion] = useState<string | null>(null);
+  // Contextual answer options from the server (per-question). The static
+  // QUICK_REPLIES below is only a last-resort fallback when the server
+  // sends none — free-text input is always available regardless.
+  const [options, setOptions] = useState<string[]>([]);
   const [answer, setAnswer] = useState("");
   const [changes, setChanges] = useState<ChangeResult[]>([]);
   const [insight, setInsight] = useState<ClinicalInsight | null>(null);
@@ -93,6 +112,7 @@ export default function AgentPanel({
 
       if (s.status === "waiting_for_caregiver" && s.last_question) {
         setQuestion(s.last_question);
+        setOptions(s.last_options && s.last_options.length > 0 ? s.last_options : QUICK_REPLIES_FALLBACK);
         setStatus("waiting_for_caregiver");
       } else if (s.status === "completed" && json.insight) {
         setInsight(json.insight);
@@ -121,6 +141,10 @@ export default function AgentPanel({
   }, []);
 
   // Auto-resume: deep-link session first, else latest pending notification (PRD §26).
+  // Explicitly (re-)enter loading first: without this, a remount or a slow
+  // dispatch fetch would briefly render the idle empty card ("Belum Ada
+  // Investigasi Aktif") before the real state resolves. Idle is now only
+  // reached when we positively know there is nothing to show.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -128,16 +152,22 @@ export default function AgentPanel({
         await loadSession(initialSessionId);
         return;
       }
+      setStatus("loading_session");
       try {
         const res = await fetch("/api/notifications/dispatch", { cache: "no-store" });
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (!cancelled) setStatus("idle");
+          return;
+        }
         const json = await res.json();
         const first = json.notifications?.[0];
         if (first && !cancelled) {
           await loadSession(first.sessionId);
+        } else if (!cancelled) {
+          setStatus("idle");
         }
       } catch {
-        /* offline — stay idle */
+        if (!cancelled) setStatus("idle"); /* offline — show idle empty state */
       }
     })();
     return () => {
@@ -152,6 +182,7 @@ export default function AgentPanel({
     setBrief(null);
     setChanges([]);
     setQuestion(null);
+    setOptions([]);
     setSessionId(null);
     setQuestionsCount(0);
     pollCount.current = 0;
@@ -177,6 +208,7 @@ export default function AgentPanel({
       if (json.status === "waiting_for_caregiver") {
         setSessionId(json.session_id);
         setQuestion(json.question);
+        setOptions(json.answer_options && json.answer_options.length > 0 ? json.answer_options : QUICK_REPLIES_FALLBACK);
         setQuestionsCount(1);
         setStatus("waiting_for_caregiver");
         return;
@@ -213,6 +245,7 @@ export default function AgentPanel({
     setInsight(null);
     setBrief(null);
     setQuestion(null);
+    setOptions([]);
     setChanges([]);
     setQuestionsCount(0);
     setErrorMsg(null);
@@ -237,6 +270,7 @@ export default function AgentPanel({
 
       if (json.status === "waiting_for_caregiver") {
         setQuestion(json.question);
+        setOptions(json.answer_options && json.answer_options.length > 0 ? json.answer_options : QUICK_REPLIES_FALLBACK);
         setQuestionsCount((c) => c + 1);
         setStatus("waiting_for_caregiver");
         return;
@@ -287,12 +321,6 @@ export default function AgentPanel({
       setGeneratingBrief(false);
     }
   }
-
-  const QUICK_REPLIES = [
-    "Ya, lebih sering dari biasanya",
-    "Tidak, masih normal",
-    "Tidak terlalu yakin",
-  ];
 
   return (
     <div className="max-w-[720px] mx-auto">
@@ -425,7 +453,7 @@ export default function AgentPanel({
             <p className="text-base font-semibold leading-relaxed">&quot;{question}&quot;</p>
           </div>
           <div className="flex flex-col gap-2 mb-4">
-            {QUICK_REPLIES.map((r) => (
+            {(options.length > 0 ? options : QUICK_REPLIES_FALLBACK).map((r) => (
               <button
                 key={r}
                 onClick={() => submitAnswer(r)}

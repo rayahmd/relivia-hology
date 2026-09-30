@@ -33,8 +33,19 @@ If you need more information:
 {
   "needs_more_info": true,
   "question": "Your focused question in Bahasa Indonesia",
-  "question_focus": "what specific gap this question addresses"
+  "question_focus": "what specific gap this question addresses",
+  "answer_options": ["option 1 in Bahasa Indonesia", "option 2", "option 3"]
 }
+
+RULES FOR answer_options:
+- 2 to 4 short options (max ~40 chars each), written for a caregiver
+- Each option must directly answer THIS question — never reuse generic
+  yes/no templates across different topics (sleep needs sleep answers,
+  medication needs medication answers, social needs social answers)
+- Natural, non-leading, non-alarming; always allow "Tidak yakin" style
+  uncertainty as one option when it fits
+- The caregiver can always type a free-text answer instead, so options
+  are shortcuts, not constraints
 
 If you have enough information:
 {
@@ -66,6 +77,7 @@ export type AgentDecision = {
   needs_more_info: boolean;
   question?: string;
   question_focus?: string;
+  answer_options?: string[];
   insight?: AgentInsight;
 };
 
@@ -102,12 +114,59 @@ export async function callGeminiInvestigate(contextText: string): Promise<string
 export function parseAgentDecision(raw: string): AgentDecision {
   try {
     const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    return JSON.parse(cleaned) as AgentDecision;
+    const parsed = JSON.parse(cleaned) as AgentDecision;
+    // AI sometimes omits options — guarantee contextual ones server-side.
+    if (parsed.needs_more_info && parsed.question) {
+      parsed.answer_options = normalizeAnswerOptions(parsed.answer_options, parsed.question, parsed.question_focus);
+    }
+    return parsed;
   } catch {
     return {
       needs_more_info: true,
       question: DEFAULT_QUESTION,
       question_focus: DEFAULT_QUESTION_FOCUS,
+      answer_options: getFallbackAnswerOptions(DEFAULT_QUESTION, DEFAULT_QUESTION_FOCUS),
     };
   }
+}
+
+/**
+ * Deterministic contextual options by question topic. Used whenever the AI
+ * omits answer_options (or Gemini is down), so every question — sleep,
+ * social, medication, mood — still gets relevant shortcuts. Keyword match
+ * on the question text keeps old sessions (no stored options) working too.
+ */
+// ponytail: keyword heuristic, upgrade to per-question AI options only (already primary path)
+export function getFallbackAnswerOptions(question: string, focus?: string): string[] {
+  const t = `${focus ?? ""} ${question}`.toLowerCase();
+  if (/tidur|sleep|begadang|insomnia|bangun malam|kantuk/.test(t))
+    return ["Tidur nyenyak seperti biasa", "Sering terbangun di malam hari", "Sulit memulai tidur", "Tidak terlalu yakin"];
+  if (/sosial|interaksi|bergaul|menarik diri|keluar kamar|bertemu|withdrawal/.test(t))
+    return ["Masih mau berinteraksi seperti biasa", "Lebih sering menyendiri", "Menghindari orang tertentu saja", "Tidak terlalu yakin"];
+  if (/obat|medication|minum obat|dosis|resep/.test(t))
+    return ["Minum obat teratur sesuai jadwal", "Ada jadwal yang terlewat", "Menolak minum obat", "Tidak terlalu yakin"];
+  if (/makan|makanan|nafsu|appetite/.test(t))
+    return ["Nafsu makan seperti biasa", "Nafsu makan berkurang", "Nafsu makan bertambah", "Tidak terlalu yakin"];
+  if (/mood|suasana|emosi|marah|sedih|cemas|irritable/.test(t))
+    return ["Suasana hati stabil", "Mudah marah atau tersinggung", "Terlihat murung atau muram", "Tidak terlalu yakin"];
+  if (/aktivitas|aktivitas|mandi|self-care|merawat diri|semangat/.test(t))
+    return ["Aktivitas seperti biasa", "Kurang semangat beraktivitas", "Butuh diingatkan untuk aktivitas", "Tidak terlalu yakin"];
+  if (/perilaku|aneh|bicara sendiri|halusinasi|curiga/.test(t))
+    return ["Tidak ada perilaku yang janggal", "Ada perilaku yang tidak biasa", "Kadang terlihat, kadang tidak", "Tidak terlalu yakin"];
+  return ["Ya, lebih sering dari biasanya", "Tidak, masih normal", "Tidak terlalu yakin"];
+}
+
+/** Keep AI options (max 4, trimmed, deduped) or fall back by topic. */
+export function normalizeAnswerOptions(
+  options: unknown,
+  question: string,
+  focus?: string
+): string[] {
+  if (Array.isArray(options)) {
+    const cleaned = [...new Set(
+      options.filter((o): o is string => typeof o === "string").map((o) => o.trim()).filter(Boolean)
+    )].slice(0, 4);
+    if (cleaned.length >= 2) return cleaned;
+  }
+  return getFallbackAnswerOptions(question, focus);
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { agentNotificationCopy, agentDeepLink } from "@/lib/notify";
+import { getFallbackAnswerOptions } from "@/lib/agentCore";
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +58,21 @@ export async function GET(
     }
 
     const changes =
-      (session.current_context as { changes?: unknown[] })?.changes ?? [];
+      (session.current_context as { changes?: unknown[]; question_options?: string[][] })?.changes ?? [];
+
+    // Contextual answer options travel with the question (stored per round
+    // in current_context.question_options). Old sessions without stored
+    // options get a topic-based fallback so they never show a generic
+    // template either.
+    const storedOptions =
+      (session.current_context as { question_options?: string[][] })?.question_options ?? [];
+    const lastStored = storedOptions.length > 0 ? storedOptions[storedOptions.length - 1] : null;
+    const lastOptions =
+      lastStored && lastStored.length >= 2
+        ? lastStored
+        : lastQuestion
+          ? getFallbackAnswerOptions(lastQuestion)
+          : [];
 
     // Sessions abandoned (stale investigating) or cancelled by the caregiver
     // resolve to `completed` without an insight — flag them so the UI can
@@ -75,6 +90,7 @@ export async function GET(
         questions_count: questions.length,
         max_questions: 3,
         last_question: session.status === "waiting_for_caregiver" ? lastQuestion : null,
+        last_options: session.status === "waiting_for_caregiver" ? lastOptions : [],
         questions_asked: questions,
         responses_count: responses.length,
         changes,
