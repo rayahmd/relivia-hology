@@ -1,17 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { agentNotificationCopy, agentDeepLink } from "@/lib/notify";
-import { getFallbackAnswerOptions } from "@/lib/agentCore";
+import { getFallbackAnswerOptions, getStoredOptions, type AgentSessionContext } from "@/lib/agentCore";
+import { getOwnedPatient } from "@/lib/getOrCreatePatient";
 
 export const dynamic = "force-dynamic";
 
-/**
- * GET /api/agent/session/:id (PRD §26).
- *
- * Opened via notification deep link /agent?session=<id>.
- * Returns the session state so the Agent page can render the pending
- * question immediately when status = waiting_for_caregiver.
- */
+// opened via notification deep link /agent?session=<id>. returns the
+// session state so the agent page renders the pending question immediately.
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -31,20 +27,15 @@ export async function GET(
 
     if (!session) return NextResponse.json({ error: "Session not found" }, { status: 404 });
 
-    // Verify patient ownership (PRD §35)
-    const { data: patient } = await supabase
-      .from("patients")
-      .select("id, name")
-      .eq("id", session.patient_id)
-      .eq("caregiver_id", user.id)
-      .single();
+    // verify patient ownership
+    const patient = await getOwnedPatient(supabase, session.patient_id, user.id);
     if (!patient) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     const questions: string[] = session.questions_asked ?? [];
     const responses: string[] = session.caregiver_responses ?? [];
     const lastQuestion = questions.length > 0 ? questions[questions.length - 1] : null;
 
-    // If completed, attach the resulting insight for direct rendering.
+    // attach the insight when completed, for direct rendering.
     let insight = null;
     if (session.status === "completed") {
       const { data } = await supabase
@@ -57,26 +48,17 @@ export async function GET(
       insight = data ?? null;
     }
 
-    const changes =
-      (session.current_context as { changes?: unknown[]; question_options?: string[][] })?.changes ?? [];
+    const ctx = (session.current_context ?? {}) as AgentSessionContext;
+    const changes = ctx.changes ?? [];
 
-    // Contextual answer options travel with the question (stored per round
-    // in current_context.question_options). Old sessions without stored
-    // options get a topic-based fallback so they never show a generic
-    // template either.
-    const storedOptions =
-      (session.current_context as { question_options?: string[][] })?.question_options ?? [];
-    const lastStored = storedOptions.length > 0 ? storedOptions[storedOptions.length - 1] : null;
+    // answer options travel with the question (stored per round). old
+    // sessions without stored options get a topic fallback instead.
     const lastOptions =
-      lastStored && lastStored.length >= 2
-        ? lastStored
-        : lastQuestion
-          ? getFallbackAnswerOptions(lastQuestion)
-          : [];
+      getStoredOptions(ctx, questions.length - 1) ??
+      (lastQuestion ? getFallbackAnswerOptions(lastQuestion) : []);
 
-    // Sessions abandoned (stale investigating) or cancelled by the caregiver
-    // resolve to `completed` without an insight — flag them so the UI can
-    // say so instead of rendering an empty completed state.
+    // abandoned or cancelled sessions resolve to completed without an
+    // insight — flag them so the ui says so instead of rendering empty.
     const history = (session.analysis_history ?? []) as Array<Record<string, unknown>>;
     const cancelled = history.some((h) => h?.abandoned === true || h?.cancelled === true);
 

@@ -1,11 +1,11 @@
 /**
- * Offline queue for health data (PRD §31–§32).
+ * offline queue for health data.
  *
- *   Health Connect → local queue → network? → SYNC : QUEUE
+ *   health connect → local queue → network? → sync : queue
  *
- * Used by the web layer when POST /api/health-sync fails due to network.
- * The native WorkManager path has its own retry (Result.retry) — this queue
- * covers foreground syncs from the browser / WebView.
+ * used by the web layer when POST /api/health-sync fails. the native
+ * workmanager path has its own retry — this queue covers foreground
+ * syncs from the browser / webview.
  */
 
 export type QueuedHealthPayload = {
@@ -44,7 +44,7 @@ function saveQueue(items: QueuedHealthPayload[]): void {
   }
 }
 
-/** Add a payload to the local queue (when network is unavailable). */
+/** add a payload to the local queue (when network is unavailable). */
 export function enqueueHealth(payload: QueuedHealthPayload): number {
   const q = loadQueue();
   q.push(payload);
@@ -52,7 +52,7 @@ export function enqueueHealth(payload: QueuedHealthPayload): number {
   return q.length;
 }
 
-/** Number of payloads waiting for network. */
+/** number of payloads waiting for network. */
 export function queuedCount(): number {
   return loadQueue().length;
 }
@@ -71,8 +71,8 @@ async function postPayload(payload: QueuedHealthPayload): Promise<boolean> {
 }
 
 /**
- * POST with offline fallback. Returns { synced, queued }.
- * Network errors → payload is queued for the next flush (never throws).
+ * post with offline fallback. returns { synced, queued }.
+ * network errors → queued for the next flush (never throws).
  */
 export async function postHealthWithQueue(payload: QueuedHealthPayload): Promise<{
   synced: boolean;
@@ -105,7 +105,7 @@ export async function postHealthWithQueue(payload: QueuedHealthPayload): Promise
   }
 }
 
-/** Flush all queued payloads (call on app open / online event). */
+/** flush all queued payloads (call on app open / online event). */
 export async function flushHealthQueue(): Promise<{
   flushed: number;
   remaining: number;

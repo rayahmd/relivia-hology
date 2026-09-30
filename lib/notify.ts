@@ -1,19 +1,19 @@
 /**
- * Notification copy composer (PRD §21–§23).
+ * notification copy composer.
  *
- * The notification is a TRIGGER only — it never contains the agent question
- * or clinical detail. Tapping it deep-links to /agent?session=<id> (PRD §25).
+ * the notification is a trigger only — it never contains the agent question
+ * or clinical detail. tapping it deep-links to /agent?session=<id>.
  */
 
 export type NotificationType = "agent_question" | "insight_ready";
 
-/** Android notification channel shared by the JS and worker paths. */
+/** android notification channel shared by the js and worker paths. */
 export const NOTIFICATION_CHANNEL_ID = "relivia-monitoring";
 export const NOTIFICATION_CHANNEL_NAME = "Relivia Monitoring";
 export const NOTIFICATION_SOUND = "relivia_beep.wav";
 
 /**
- * Stable numeric notification id per (type, session): re-polls overwrite
+ * stable numeric notification id per (type, session): re-polls overwrite
  * the same shade entry instead of stacking duplicates, while the question
  * and the insight of one session stay visible as two entries.
  */
@@ -47,12 +47,12 @@ export function agentNotificationCopy(type: NotificationType): {
   };
 }
 
-/** Deep-link target for a notification tap (PRD §25). */
+/** deep-link target for a notification tap. */
 export function agentDeepLink(sessionId: string): string {
   return `/agent?session=${sessionId}`;
 }
 
-/** Native deep-link URI handled by MainActivity → Capacitor App plugin. */
+/** native deep-link uri handled by mainactivity → capacitor app plugin. */
 export function agentDeepLinkUri(sessionId: string): string {
   return `relivia://agent?session=${sessionId}`;
 }

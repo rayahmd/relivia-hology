@@ -1,7 +1,7 @@
 import { TopNavSkeleton } from "@/components/RouteSkeleton";
 
-// Skeleton yang meniru layout dashboard: tampil INSTAN saat navigasi
-// (login → dashboard, antar halaman) selagi data di-fetch di server.
+// skeleton mirroring the dashboard layout: paints instantly on navigation
+// while the server fetches data.
 export default function DashboardLoading() {
   return (
     <div className="min-h-screen flex flex-col bg-[#FAF8FF] animate-pulse" aria-label="Memuat dashboard…">

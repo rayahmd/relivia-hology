@@ -18,10 +18,10 @@ import {
 /**
  * Kartu aktivasi monitoring otomatis:
  *
- *   Hubungkan Data Kesehatan → izin akses → izin notifikasi →
- *   sinkronisasi background → Monitoring Aktif
+ *   hubungkan data kesehatan → izin akses → izin notifikasi →
+ *   sinkronisasi background → monitoring aktif
  *
- * Jika data kesehatan tidak tersedia, check-in harian dan fitur lain
+ * jika data kesehatan tidak tersedia, check-in harian dan fitur lain
  * tetap berfungsi normal.
  */
 export default function MonitoringCard({ patientId }: { patientId: string }) {
@@ -41,8 +41,8 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
       if (cancelled) return;
       setNative(n);
       if (n) {
-        // Cek ketersediaan layanan kesehatan dan versi aplikasi secara
-        // bersamaan agar satu panggilan yang lambat tidak menghambat lainnya.
+        // availability + app version in parallel so one slow call
+        // doesn't block the other.
         await Promise.allSettled([
           (async () => {
             try {
@@ -71,7 +71,7 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
     };
   }, []);
 
-  /** Petakan pesan error teknis menjadi panduan yang mudah dipahami. */
+  /** map technical errors to caregiver-friendly guidance. */
   function healthErrorMessage(e: unknown): string {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes("PERMISSION_TIMEOUT")) {
@@ -89,7 +89,7 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
     return `Gagal mengaktifkan monitoring: ${msg}`;
   }
 
-  /** Fire one real system notification as proof it works (best effort). */
+  /** one real system notification as proof it works (best effort). */
   async function fireConfirmationNotification(): Promise<boolean> {
     try {
       const { ensureMonitoringChannel } = await import("@/lib/nativeBridge");
@@ -116,8 +116,8 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
   }
 
   async function handleConnect() {
-    // Sudah terhubung → abaikan (tombol juga disabled, ini lapis kedua
-    // anti-spam agar koneksi/background-sync tidak dijadwalkan ulang).
+    // already connected → ignore (button is also disabled; second layer
+    // so background sync is never scheduled twice).
     if (monitoringActive) return;
     setBusy(true);
     setMessage(null);
@@ -126,8 +126,8 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
       const onNative = await isNative();
 
       if (onNative) {
-        // Minta izin notifikasi terlebih dahulu agar notifikasi sistem
-        // tetap berfungsi apa pun hasil koneksi data kesehatan.
+        // notification permission first, so system notifications keep
+        // working whatever the health-data result is.
         const notifGranted = await requestNotificationPermission();
 
         // 1. Minta izin akses data kesehatan.
@@ -169,7 +169,7 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
               : "✅ Monitoring aktif, tapi izin notifikasi sistem ditolak — pembaruan hanya muncul sebagai banner di aplikasi. Aktifkan via Pengaturan > Aplikasi > Relivia > Notifikasi."
         );
       } else {
-        // Web: monitoring berjalan lewat sinkronisasi berkala saat aplikasi dibuka.
+        // web: monitoring runs on periodic sync while the app is open.
         setMonitoringActive(true);
         setMessage(
           "✅ Monitoring aktif. Data kesehatan akan disinkronkan otomatis dan Anda akan diberi tahu bila ada perubahan penting."
@@ -190,25 +190,10 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
     }
   }
 
-  const [diag, setDiag] = useState<string | null>(null);
-  async function handleShowBridge() {
-    if (diag !== null) {
-      setDiag(null);
-      return;
-    }
-    try {
-      const { getBridgeDiagnostics } = await import("@/lib/nativeBridge");
-      const d = await getBridgeDiagnostics();
-      setDiag(JSON.stringify(d));
-    } catch (e) {
-      setDiag(`ERR: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
   return (
     <div className="relative overflow-hidden rounded-[20px] bg-[#8B5CF6] text-white p-5 mb-4 shadow-pop">
 
-      {/* Watermark icon */}
+      {/* watermark */}
       <Image
         src="/images/icons/monitoring.svg"
         alt=""
@@ -217,7 +202,7 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
         className="absolute -right-6 pointer-events-none select-none"
       />
 
-      {/* Konten asli, dikasih z-10 biar di atas watermark */}
+      {/* content above the watermark */}
       <div className="relative z-10">
         <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-white/75 mb-1">
           Automatic Monitoring

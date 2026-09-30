@@ -13,13 +13,11 @@ export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const supabase = createClient();
-  // Greeting menyapa caregiver (pemakai aplikasi), bukan pasien.
+  // greeting addresses the caregiver (the app user), not the patient.
   const [patient, profile] = await Promise.all([getOrCreatePatient(), getOrCreateProfile()]);
   const today = new Date().toISOString().slice(0, 10);
 
-  // Independent queries dijalankan paralel (satu round-trip batch),
-  // bukan 6x sequential await — TTFB turun dari jumlah latensi
-  // menjadi latensi query terlambat saja. Tidak ada perubahan behavior.
+  // independent queries in parallel (one batched round-trip), not serial.
   const [
     { data: checkinsRaw },
     { data: todayHealth },
@@ -74,7 +72,7 @@ export default async function DashboardPage() {
     : 0;
   const flagCount = checkins.filter((c) => c.behavior_change_flag).length;
 
-  // Today's check-in
+  // today's check-in
   const todayCheckin = checkins.find((c) => c.checkin_date === today) ?? null;
 
   const baselineMap: Record<string, number> = {};
@@ -99,7 +97,7 @@ export default async function DashboardPage() {
   };
   const statusCfg = STATUS_CONFIG[changeStatus];
 
-  // Dynamic time greeting
+  // time-based greeting
   const hour = new Date().getHours();
   let timeGreeting = "Good Morning,";
   if (hour >= 12 && hour < 17) timeGreeting = "Good Afternoon,";
@@ -111,7 +109,7 @@ export default async function DashboardPage() {
 
       <div className="flex-1 px-4 sm:px-6 md:px-8 py-6 max-w-[540px] md:max-w-[760px] lg:max-w-[960px] mx-auto w-full space-y-4">
 
-        {/* Header Greeting */}
+        {/* greeting */}
         <div className="pt-2 pb-1">
           <p className="text-sm font-bold text-[#8B5CF6] tracking-tight">{timeGreeting}</p>
           <h1 className="text-3xl sm:text-4xl font-extrabold text-[#7C3AED] tracking-tight mt-0.5">
@@ -119,7 +117,7 @@ export default async function DashboardPage() {
           </h1>
         </div>
 
-        {/* Patient Profile & Check-in Card */}
+        {/* patient card + check-in link */}
         <div className="bg-white rounded-3xl p-4 sm:p-5 border border-purple-100 shadow-sm flex items-center justify-between gap-4">
           <div className="flex items-center gap-3.5 min-w-0">
             <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-[#8B5CF6] to-[#C4B5FD] text-white flex items-center justify-center font-extrabold text-xl flex-none ring-2 ring-purple-100 shadow-sm overflow-hidden">
@@ -145,7 +143,7 @@ export default async function DashboardPage() {
           </Link>
         </div>
 
-        {/* Status Pemantauan Card */}
+        {/* monitoring status */}
         <div className="bg-white rounded-3xl p-4 sm:p-5 border border-gray-100 shadow-sm">
           <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block mb-2.5">
             STATUS PEMANTAUAN
@@ -178,54 +176,14 @@ export default async function DashboardPage() {
           )}
         </div>
 
-        {/* 3 Pastel Gradient Stat Cards */}
+        {/* stat cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-          {/* Card 1: Medication Adherence */}
-          <div className="bg-gradient-to-br from-[#FFF4BF] to-[#FFBEFB] rounded-3xl p-4 sm:p-5 relative overflow-hidden shadow-sm">
-
-            {/* Icon jadi layer background, absolute + z-0 */}
-            <div className="absolute left-0 bottom-0 z-0 opacity-90">
-              <Image src="/images/icons/medicine-box.svg" alt="" width={120} height={120} />
-            </div>
-
-            {/* Teks jadi layer depan, z-10, dikasih padding kiri biar ga nabrak icon */}
-            <div className="relative z-10 pl-24">
-              <div className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">{adherence}%</div>
-              <div className="text-xs text-gray-600 font-medium leading-tight">Kepatuhan obat 7 hari</div>
-            </div>
-          </div>
-          {/* Card 2: Days Recorded */}
-          <div className="bg-gradient-to-br from-[#FFF4BF] to-[#FFBEFB] rounded-3xl p-4 sm:p-5 relative overflow-hidden shadow-sm">
-
-            {/* Icon jadi layer background, absolute + z-0 */}
-            <div className="absolute left-0 bottom-0 z-0 opacity-90">
-              <Image src="/images/icons/tabler_comet.svg" alt="" width={140} height={140} />
-            </div>
-
-            {/* Teks jadi layer depan, z-10, dikasih padding kiri biar ga nabrak icon */}
-            <div className="relative z-10 pl-24">
-              <div className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">{checkins.length}</div>
-              <div className="text-xs text-gray-600 font-medium leading-tight">Hari tercatat</div>
-            </div>
-          </div>
-
-          {/* Card 3: Days Flagged */}
-          <div className="bg-gradient-to-br from-[#FFF4BF] to-[#FFBEFB] rounded-3xl p-4 sm:p-5 relative overflow-hidden shadow-sm">
-
-            {/* Icon jadi layer background, absolute + z-0 */}
-            <div className="absolute left-0 bottom-0 z-0 opacity-90">
-              <Image src="/images/icons/warning.svg" alt="" width={140} height={140} />
-            </div>
-
-            {/* Teks jadi layer depan, z-10, dikasih padding kiri biar ga nabrak icon */}
-            <div className="relative z-10 pl-24">
-              <div className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">{flagCount}</div>
-              <div className="text-xs text-gray-600 font-medium leading-tight">Hari ditandai berubah</div>
-            </div>
-          </div>
+          <StatCard icon="/images/icons/medicine-box.svg" iconSize={120} value={`${adherence}%`} label="Kepatuhan obat 7 hari" />
+          <StatCard icon="/images/icons/tabler_comet.svg" iconSize={140} value={String(checkins.length)} label="Hari tercatat" />
+          <StatCard icon="/images/icons/warning.svg" iconSize={140} value={String(flagCount)} label="Hari ditandai berubah" />
         </div>
 
-        {/* CTA Pills */}
+        {/* cta pills */}
         <div className="flex flex-wrap justify-center gap-3 pt-1 pb-1">
           <Link
             href="/checkin"
@@ -241,7 +199,7 @@ export default async function DashboardPage() {
           </Link>
         </div>
 
-        {/* Grafik Pemantauan Card */}
+        {/* monitoring chart */}
         <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="p-4 sm:p-5 border-b border-gray-100">
             <h3 className="font-extrabold text-base text-gray-900 mb-2">Grafik Pemantauan</h3>
@@ -265,7 +223,7 @@ export default async function DashboardPage() {
           </div>
         </div>
 
-        {/* Kalender Pencatatan Card */}
+        {/* recording calendar */}
         <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="p-4 sm:p-5 border-b border-gray-100">
             <h3 className="font-extrabold text-base text-gray-900">Kalender Pencatatan</h3>
@@ -273,7 +231,7 @@ export default async function DashboardPage() {
           <Calendar checkins={checkins} />
         </div>
 
-        {/* Log Harian Card */}
+        {/* daily log */}
         <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="p-4 sm:p-5 border-b border-gray-100">
             <h3 className="font-extrabold text-base text-gray-900">Log Harian</h3>
@@ -317,6 +275,22 @@ export default async function DashboardPage() {
           </div>
         </div>
 
+      </div>
+    </div>
+  );
+}
+
+// icon as background layer (absolute, z-0), text in front (z-10) with left
+// padding so it never collides with the icon.
+function StatCard({ icon, iconSize, value, label }: { icon: string; iconSize: number; value: string; label: string }) {
+  return (
+    <div className="bg-gradient-to-br from-[#FFF4BF] to-[#FFBEFB] rounded-3xl p-4 sm:p-5 relative overflow-hidden shadow-sm">
+      <div className="absolute left-0 bottom-0 z-0 opacity-90">
+        <Image src={icon} alt="" width={iconSize} height={iconSize} />
+      </div>
+      <div className="relative z-10 pl-24">
+        <div className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">{value}</div>
+        <div className="text-xs text-gray-600 font-medium leading-tight">{label}</div>
       </div>
     </div>
   );

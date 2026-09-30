@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getOrCreatePatient } from "@/lib/getOrCreatePatient";
+import { extractGeminiText } from "@/lib/agentCore";
 
 const SYSTEM_PROMPT = `You are a clinical documentation assistant for a caregiver-facing app called Relivia.
 You do NOT diagnose or predict relapse. You summarize caregiver observations and highlight
@@ -19,6 +20,8 @@ const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemi
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// local fetch (not the shared postGemini): retry needs the raw response
+// for status + retry-after headers.
 async function callGemini(payload: unknown): Promise<Response> {
   return fetch(GEMINI_URL, {
     method: "POST",
@@ -104,14 +107,14 @@ export async function POST() {
     generationConfig: { maxOutputTokens: 800, responseMimeType: "application/json" },
   };
 
-  // Retry transient failures (429 rate-limit / 5xx) with exponential backoff.
+  // retry transient failures (429 / 5xx) with exponential backoff.
   let geminiRes: Response | null = null;
   for (let attempt = 0; attempt <= 2; attempt++) {
     geminiRes = await callGemini(payload);
     if (geminiRes.ok) break;
     const detail = await geminiErrorDetail(geminiRes);
     if (geminiRes.status === 429 && detail.toLowerCase().includes("requests per")) {
-      // Retry on explicit rate-limit window.
+      // explicit rate-limit window.
       const retryMs = Number(geminiRes.headers.get("retry-after") ?? "") * 1000;
       await sleep(retryMs > 0 && attempt < 2 ? retryMs : 1000 * 2 ** attempt);
       continue;
@@ -132,8 +135,7 @@ export async function POST() {
   }
 
   const data = await geminiRes.json();
-  const rawText: string =
-    data.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? "").join("") ?? "";
+  const rawText: string = extractGeminiText(data);
 
   if (!rawText.trim()) {
     return NextResponse.json({ error: "Gemini mengembalikan respons tanpa isi.", raw: data }, { status: 502 });

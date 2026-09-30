@@ -1,9 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { DEFAULT_QUESTION, DEFAULT_QUESTION_FOCUS, getFallbackAnswerOptions, normalizeAnswerOptions } from "@/lib/agentCore";
-
-const GEMINI_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent";
+import {
+  DEFAULT_QUESTION,
+  DEFAULT_QUESTION_FOCUS,
+  cleanGeminiJson,
+  extractGeminiText,
+  getFallbackAnswerOptions,
+  normalizeAnswerOptions,
+  postGemini,
+  withAppendedOptions,
+  type AgentDecision,
+  type AgentSessionContext,
+} from "@/lib/agentCore";
+import { getOwnedPatient } from "@/lib/getOrCreatePatient";
 
 const REANALYSIS_SYSTEM_PROMPT = `You are Relivia Agent. You are re-analyzing patient behavioral change data after receiving additional context from the caregiver.
 
@@ -48,18 +57,11 @@ If you have enough information:
 }`;
 
 async function callGemini(messages: unknown[]): Promise<string> {
-  const res = await fetch(GEMINI_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": process.env.GEMINI_API_KEY ?? "",
-    },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: REANALYSIS_SYSTEM_PROMPT }] },
-      contents: messages,
-      generationConfig: { maxOutputTokens: 1200, temperature: 0.3 },
-    }),
-    cache: "no-store",
+  const res = await postGemini({
+    systemPrompt: REANALYSIS_SYSTEM_PROMPT,
+    contents: messages as { role: string; parts: Array<{ text: string }> }[],
+    maxOutputTokens: 1200,
+    temperature: 0.3,
   });
 
   if (!res.ok) {
@@ -67,10 +69,7 @@ async function callGemini(messages: unknown[]): Promise<string> {
     throw new Error(`Gemini error ${res.status}: ${err}`);
   }
 
-  const data = await res.json();
-  return (
-    data.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ?? ""
-  );
+  return extractGeminiText(await res.json());
 }
 
 export async function POST(req: NextRequest) {
@@ -88,7 +87,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "session_id and answer are required" }, { status: 400 });
     }
 
-    // Load session
+    // load session
     const { data: session, error: sessionErr } = await supabase
       .from("agent_sessions")
       .select("*")
@@ -99,37 +98,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
-    // Verify patient ownership
-    const { data: patient } = await supabase
-      .from("patients")
-      .select("*")
-      .eq("id", session.patient_id)
-      .eq("caregiver_id", user.id)
-      .single();
-
+    // patient belongs to caregiver
+    const patient = await getOwnedPatient(supabase, session.patient_id, user.id);
     if (!patient) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    // Enforce max 3 questions
+    // max 3 questions
     const questionsAsked: string[] = session.questions_asked ?? [];
     const caregiverResponses: string[] = session.caregiver_responses ?? [];
     const MAX_QUESTIONS = 3;
 
-    // Add the new answer
     const updatedResponses = [...caregiverResponses, answer];
 
-    // Build conversation context for re-analysis
-    const ctx = session.current_context as {
-      changes?: Array<{
-        metric: string;
-        label: string;
-        baseline_value: number;
-        current_value: number;
-        change_percent: number;
-        severity: string;
-      }>;
-      todayCheckin?: Record<string, unknown>;
-      question_options?: string[][];
-    };
+    // conversation context for re-analysis
+    const ctx = session.current_context as AgentSessionContext;
 
     const qaHistory = questionsAsked
       .map((q, i) => `Pertanyaan ${i + 1}: ${q}\nJawaban caregiver: ${updatedResponses[i] ?? "(belum dijawab)"}`)
@@ -159,8 +140,8 @@ Apakah kamu sudah memiliki cukup konteks untuk menghasilkan clinical insight?
     const rawResponse = await callGemini([
       { role: "user", parts: [{ text: contextText }] },
     ]).catch((err) => {
-      // Gemini down mid-conversation: never 500 into a dead end.
-      // Ask the default question (quota permitting) or finish deterministically.
+      // gemini down mid-conversation: never 500 into a dead end.
+      // ask the default question (quota permitting) or finish deterministically.
       const message = err instanceof Error ? err.message : String(err);
       const lastQ = questionsAsked[questionsAsked.length - 1];
       if (questionsAsked.length < MAX_QUESTIONS && lastQ !== DEFAULT_QUESTION) {
@@ -174,41 +155,26 @@ Apakah kamu sudah memiliki cukup konteks untuk menghasilkan clinical insight?
       return JSON.stringify({ needs_more_info: false });
     });
 
-    let parsed: {
-      needs_more_info: boolean;
-      question?: string;
-      question_focus?: string;
-      answer_options?: string[];
-      insight?: {
-        summary: string;
-        detected_changes: string[];
-        related_factors: string[];
-        monitoring_points: string[];
-        interpretation: string;
-        context_notes: string;
-      };
-    };
+    let parsed: AgentDecision;
 
     try {
-      const cleaned = rawResponse.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      parsed = JSON.parse(cleaned);
+      parsed = JSON.parse(cleanGeminiJson(rawResponse));
     } catch {
       parsed = { needs_more_info: false, insight: undefined };
     }
 
-    // Force completion if max questions reached
+    // force completion once max questions reached
     if (questionsAsked.length >= MAX_QUESTIONS) {
       parsed.needs_more_info = false;
     }
 
-    // Guard: `needs_more_info` without a question strands the caregiver.
+    // `needs_more_info` without a question strands the caregiver.
     if (parsed.needs_more_info && !parsed.question) {
       parsed.question = DEFAULT_QUESTION;
       parsed.question_focus = DEFAULT_QUESTION_FOCUS;
     }
 
     if (parsed.needs_more_info && parsed.question) {
-      // Ask one more question
       const updatedQuestions = [...questionsAsked, parsed.question];
       const newOptions = normalizeAnswerOptions(parsed.answer_options, parsed.question, parsed.question_focus);
 
@@ -218,10 +184,7 @@ Apakah kamu sudah memiliki cukup konteks untuk menghasilkan clinical insight?
           status: "waiting_for_caregiver",
           questions_asked: updatedQuestions,
           caregiver_responses: updatedResponses,
-          current_context: {
-            ...(ctx ?? {}),
-            question_options: [...(ctx.question_options ?? []), newOptions],
-          },
+          current_context: withAppendedOptions(ctx, newOptions),
           analysis_history: [
             ...(session.analysis_history ?? []),
             { round: updatedQuestions.length, question: parsed.question, context: contextText },
@@ -240,7 +203,7 @@ Apakah kamu sudah memiliki cukup konteks untuk menghasilkan clinical insight?
       });
     }
 
-    // Generate insight
+    // insight with deterministic defaults when the model gave none
     const insightData = parsed.insight ?? {
       summary: "Terdapat perubahan bermakna dari pola perilaku biasanya. Perlu didiskusikan dengan tenaga kesehatan.",
       detected_changes: [],
@@ -250,7 +213,6 @@ Apakah kamu sudah memiliki cukup konteks untuk menghasilkan clinical insight?
       context_notes: updatedResponses.join("; "),
     };
 
-    // Save insight
     const { data: savedInsight } = await supabase
       .from("insights")
       .insert({
@@ -273,7 +235,6 @@ Apakah kamu sudah memiliki cukup konteks untuk menghasilkan clinical insight?
       .select()
       .single();
 
-    // Update session to completed
     await supabase
       .from("agent_sessions")
       .update({

@@ -7,7 +7,7 @@ function safeNext(raw: string | null): string {
   return "/dashboard";
 }
 
-/** Redirect ke /login dengan membawa pesan error yang bisa dibaca UI. */
+/** redirect ke /login dengan pesan error yang bisa dibaca ui. */
 function loginErrorRedirect(request: NextRequest, params: Record<string, string>): NextResponse {
   const url = request.nextUrl.clone();
   url.pathname = "/login";
@@ -23,10 +23,9 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get("code");
   const next = safeNext(searchParams.get("next"));
 
-  // Supabase/Google menolak di sisi mereka (mis. Redirect URL belum masuk
-  // allow-list di dashboard, atau user membatalkan di layar consent).
-  // Teruskan deskripsi aslinya supaya /login bisa menampilkannya,
-  // bukan pesan generik yang bikin retry buta.
+  // provider menolak di sisinya (redirect url belum allow-list, atau
+  // user batal di layar consent). teruskan deskripsi aslinya supaya
+  // /login menampilkannya, bukan pesan generik yang bikin retry buta.
   const oauthError = searchParams.get("error");
   if (oauthError) {
     const desc =
@@ -42,11 +41,9 @@ export async function GET(request: NextRequest) {
     return loginErrorRedirect(request, { error: "auth_failed" });
   }
 
-  // PENTING: cookie jar harus ditempel ke response redirect yang sama.
-  // Pola lama (createClient() dari @/lib/supabase/server yang menulis ke
-  // cookies() global lalu me-return NextResponse.redirect() baru) bisa
-  // membuang Set-Cookie hasil exchange — sesi terbentuk di server tapi
-  // tidak pernah sampai ke browser, user mental balik ke /login.
+  // cookie jar must attach to the same redirect response. the old pattern
+  // (fresh redirect after exchange) dropped set-cookie: session formed
+  // server-side but never reached the browser, bouncing the user to /login.
   const response = NextResponse.redirect(new URL(next, request.url));
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

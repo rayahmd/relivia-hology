@@ -1,5 +1,5 @@
 /**
- * Relivia native bridge (PRD §7–§8).
+ * Relivia native bridge.
  *
  * Single entry point from Next.js to Capacitor native capabilities:
  * Health Connect, background worker, notification, permissions, deep link.
@@ -7,8 +7,7 @@
  * - On Android native: talks to ReliviaHealthPlugin (Kotlin) and
  *   @capacitor/local-notifications for REAL OS notifications.
  * - On web: every method degrades gracefully to simulation / no-op so the
- *   app stays fully usable in the browser (PRD §10: monitoring unavailable
- *   must not break check-in and other features).
+ *   app stays fully usable in the browser.
  */
 
 import {
@@ -48,7 +47,7 @@ let capacitorModule: typeof import("@capacitor/core") | null = null;
 let pluginCache: ReliviaHealthPluginApi | null = null;
 let pluginAttempted = false;
 
-/** Diagnostic logging: console only, never changes behavior or UI. */
+/** console-only diagnostics, never changes behavior or ui. */
 function dlog(...args: unknown[]): void {
   try {
     // eslint-disable-next-line no-console
@@ -69,7 +68,7 @@ async function loadCapacitor() {
   return capacitorModule;
 }
 
-/** True when running inside the Android APK (Capacitor native). */
+/** true inside the android apk (capacitor native). */
 export async function isNative(): Promise<boolean> {
   const cap = await loadCapacitor();
   if (!cap) {
@@ -86,7 +85,7 @@ export async function isNative(): Promise<boolean> {
   }
 }
 
-/** Synchronous best-effort check (SSR safe, true only inside the APK). */
+/** sync best-effort check (ssr safe, true only inside the apk). */
 export function isNativeSync(): boolean {
   try {
     return (
@@ -100,16 +99,14 @@ export function isNativeSync(): boolean {
 }
 
 /**
- * Initialize the native plugin proxy ONCE and report readiness as a plain
+ * initialize the native plugin proxy once and report readiness as a plain
  * boolean. The boolean (never the proxy) crosses the await boundary.
  *
- * WHY: Capacitor's registerPlugin() returns a Proxy whose `get` trap
+ * why: Capacitor's registerPlugin() returns a Proxy whose `get` trap
  * returns a method wrapper for ANY property — including `then`. Awaiting
- * a promise that resolves to that proxy makes the JS engine call
- * proxy.then(), which Capacitor translates into a native call for a
- * method literally named "then" → "ReliviaHealth.then() is not implemented
- * on android" (unhandled rejection) AND the outer await never settles
- * (the wrapper ignores the resolve/reject args) → UI stuck forever.
+ * a promise that resolves to that proxy makes the engine call proxy.then(),
+ * which Capacitor translates into a native call for a method literally
+ * named "then" → unhandled rejection AND the outer await never settles.
  */
 let pluginReady: Promise<boolean> | null = null;
 
@@ -133,17 +130,17 @@ function ensurePlugin(): Promise<boolean> {
 }
 
 /**
- * Sync accessor for the cached proxy. NEVER await this (or any value
+ * sync accessor for the cached proxy. never await this (or any value
  * holding the proxy) — awaiting a thenable proxy invokes its `.then`
- * trap and hangs. Always `await ensurePlugin()` first, then call this.
+ * trap and hangs. always `await ensurePlugin()` first, then call this.
  */
 function getPlugin(): ReliviaHealthPluginApi | null {
   return pluginCache;
 }
 
-/** Health Connect availability (PRD §9). Null on web. sdkStatus passthrough
- * lets the UI explain WHY it is unavailable (not installed vs needs update).
- * SDK status codes: 1 = available, 2 = unavailable, 3 = update required. */
+/** health connect availability. null on web. sdkStatus passthrough
+ * lets the ui explain why it is unavailable.
+ * sdk codes: 1 = available, 2 = unavailable, 3 = update required. */
 export async function healthAvailability(): Promise<{
   available: boolean;
   sdkStatus?: number;
@@ -162,13 +159,13 @@ export async function healthAvailability(): Promise<{
 }
 
 /**
- * Explicit permission request (PRD §10).
- * Throws with user-friendly message when unavailable — callers show
- * "Monitoring health data unavailable" but keep the rest of the app working.
+ * explicit permission request. throws with a user-friendly message when
+ * unavailable — callers show "monitoring unavailable" but keep the rest
+ * of the app working.
  *
- * Guarded by a timeout: if the Health Connect screen never returns a
- * result (device-specific quirk), the promise rejects instead of hanging
- * the UI forever — callers then offer the manual settings fallback.
+ * guarded by a timeout: if the health connect screen never returns (a
+ * device-specific quirk), the promise rejects instead of hanging the ui
+ * forever — callers then offer the manual settings fallback.
  */
 export async function requestHealthPermissions(): Promise<{
   granted: string[];
@@ -200,7 +197,7 @@ export type AppVersion = {
   versionCode: number;
 };
 
-/** APK version (null only on web — native always resolves or throws). */
+/** apk version (null only on web — native always resolves or throws). */
 export async function getAppVersion(): Promise<AppVersion | null> {
   await ensurePlugin();
   const plugin = getPlugin();
@@ -235,126 +232,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([p.finally(() => clearTimeout(timer)), timeout]) as Promise<T>;
 }
 
-/**
- * Every @PluginMethod the current web layer may call. The diagnostics
- * compare this contract against the native PluginHeaders to prove the
- * installed APK bundles the latest plugin (not a stale install).
- * Update this list when a native method is added or renamed.
- */
-export const EXPECTED_NATIVE_METHODS = [
-  "isAvailable",
-  "getAppVersion",
-  "requestHealthPermissions",
-  "readHealth",
-  "enableBackgroundSync",
-  "disableBackgroundSync",
-  "checkNotificationPermission",
-  "requestNotificationPermission",
-  "notifyAgent",
-  "openHealthSettings",
-  "openNotificationSettings",
-] as const;
-
-export type BridgeDiagnostics = {
-  isNative: boolean;
-  /** Raw PluginHeaders injected by native — decisive proof of registration. */
-  hasPluginHeader: boolean | null;
-  headerMethods: string[] | null;
-  headerError: string | null;
-  /** Native methods missing from the installed APK (stale install proof). */
-  missingMethods: string[];
-  sdkStatus: number | null;
-  sdkError: string | null;
-  appVersion: string | null;
-  appVersionCode: number | null;
-  appVersionError: string | null;
-};
-
-/**
- * Full bridge self-test. Nothing here can hang: header read is sync JS,
- * every native call has a fast timeout. Display the result verbatim —
- * it pinpoints the failing layer (registration vs dispatch vs method).
- */
-export async function getBridgeDiagnostics(): Promise<BridgeDiagnostics> {
-  const diag: BridgeDiagnostics = {
-    isNative: false,
-    hasPluginHeader: null,
-    headerMethods: null,
-    headerError: null,
-    missingMethods: [],
-    sdkStatus: null,
-    sdkError: null,
-    appVersion: null,
-    appVersionCode: null,
-    appVersionError: null,
-  };
-  try {
-    diag.isNative = await isNative();
-  } catch (e) {
-    diag.headerError = e instanceof Error ? e.message : String(e);
-    return diag;
-  }
-  if (!diag.isNative) return diag;
-
-  // 1. PluginHeaders: injected by native at bridge init from registered
-  //    PluginHandles. Absent header = plugin never registered.
-  try {
-    const w = window as unknown as {
-      Capacitor?: { PluginHeaders?: Array<{ name: string; methods: Array<{ name: string }> }> };
-    };
-    const headers = w.Capacitor?.PluginHeaders;
-    if (!Array.isArray(headers)) {
-      diag.hasPluginHeader = false;
-      diag.headerError = "NO_PLUGIN_HEADERS_ARRAY";
-    } else {
-      const h = headers.find((x) => x?.name === "ReliviaHealth");
-      diag.hasPluginHeader = !!h;
-      diag.headerMethods = h ? h.methods.map((m) => m.name) : [];
-      if (h) {
-        // Prove the installed APK bundles the latest plugin: every method
-        // the web layer may call must be exported natively.
-        const exported = new Set(diag.headerMethods);
-        diag.missingMethods = (EXPECTED_NATIVE_METHODS as readonly string[]).filter(
-          (m) => !exported.has(m)
-        );
-      }
-    }
-  } catch (e) {
-    diag.hasPluginHeader = false;
-    diag.headerError = e instanceof Error ? e.message : String(e);
-  }
-
-  // 2. isAvailable (2.5s timeout — hang becomes visible error).
-  try {
-    await ensurePlugin();
-    const plugin = getPlugin();
-    if (!plugin) {
-      diag.sdkError = "NO_PLUGIN_PROXY";
-    } else {
-      const res = await withTimeout(plugin.isAvailable(), 2500, "isAvailable");
-      diag.sdkStatus = res.sdkStatus ?? (res.available ? 1 : -1);
-    }
-  } catch (e) {
-    diag.sdkError = e instanceof Error ? e.message : String(e);
-  }
-
-  // 3. getAppVersion (2.5s timeout).
-  try {
-    const v = await getAppVersion();
-    if (v) {
-      diag.appVersion = v.version;
-      diag.appVersionCode = v.versionCode;
-    } else {
-      diag.appVersionError = "NULL_VERSION";
-    }
-  } catch (e) {
-    diag.appVersionError = e instanceof Error ? e.message : String(e);
-  }
-
-  return diag;
-}
-
-/** Read recent health data. Returns null on web (caller falls back to simulation). */
+/** read recent health data. null on web (caller falls back to simulation). */
 export async function readHealth(daysBack = 1): Promise<NativeHealthPoint[] | null> {
   await ensurePlugin();
   const plugin = getPlugin();
@@ -363,7 +241,7 @@ export async function readHealth(daysBack = 1): Promise<NativeHealthPoint[] | nu
   return res.data ?? [];
 }
 
-/** Schedule the periodic WorkManager sync (PRD §11). No-op on web. */
+/** schedule the periodic workmanager sync. no-op on web. */
 export async function enableBackgroundSync(opts: {
   backendUrl: string;
   patientId: string;
@@ -392,14 +270,13 @@ export async function disableBackgroundSync(): Promise<void> {
 }
 
 /**
- * Show the agent notification immediately (foreground-sync path).
+ * show the agent notification immediately (foreground-sync path).
  *
- * - Native Android: REAL OS notification via @capacitor/local-notifications
- *   on channel "relivia-monitoring" (HIGH, heads-up). Never the browser
- *   Notification API. Returns true only when actually scheduled.
- * - Browser: Notification API fallback (permission permitting).
- * Body text identical in both paths (PRD §21–22), never containing the
- * agent question itself.
+ * - native android: real os notification via @capacitor/local-notifications
+ *   on channel "relivia-monitoring" (high, heads-up). never the browser
+ *   notification api. returns true only when actually scheduled.
+ * - browser: notification api fallback (permission permitting).
+ * body text identical in both paths, never containing the agent question.
  */
 export async function notifyAgent(opts: { type: string; sessionId: string }): Promise<boolean> {
   await ensurePlugin();
@@ -407,7 +284,7 @@ export async function notifyAgent(opts: { type: string; sessionId: string }): Pr
   if (plugin) {
     return notifyAgentNative(opts.type, opts.sessionId);
   }
-  // Web fallback: Notification API (best effort, silent if denied)
+  // web fallback: notification api (best effort, silent if denied)
   try {
     if (typeof window !== "undefined" && "Notification" in window) {
       if (Notification.permission === "granted") {
@@ -432,8 +309,8 @@ export async function notifyAgent(opts: { type: string; sessionId: string }): Pr
 }
 
 /**
- * Create (idempotent) the Android channel for agent triggers.
- * importance 4 = HIGH → heads-up. Sound from res/raw.
+ * create (idempotent) the android channel for agent triggers.
+ * importance 4 = high → heads-up. sound from res/raw.
  */
 export async function ensureMonitoringChannel(): Promise<boolean> {
   try {
@@ -453,8 +330,8 @@ export async function ensureMonitoringChannel(): Promise<boolean> {
 }
 
 /**
- * Post a REAL Android system notification for an agent trigger.
- * Returns true only when the OS accepted the schedule. Never resolves
+ * post a real android system notification for an agent trigger.
+ * returns true only when the os accepted the schedule. never resolves
  * true on permission denial (callers fall back to the in-app banner).
  */
 export async function notifyAgentNative(type: string, sessionId: string): Promise<boolean> {
@@ -478,10 +355,10 @@ export async function notifyAgentNative(type: string, sessionId: string): Promis
           channelId: NOTIFICATION_CHANNEL_ID,
           extra: { type: nType, sessionId },
           autoCancel: true,
-          // Inexact alarm: avoids the "Alarms & reminders" settings detour
-          // on Android 12+ for an immediate notification.
+          // inexact alarm: avoids the "alarms & reminders" settings detour
+          // on android 12+ for an immediate notification.
           isExactNotification: false,
-          // Heads-up presentation even when the app is foregrounded.
+          // heads-up even when the app is foregrounded.
           foreground: true,
         },
       ],
@@ -503,7 +380,7 @@ export async function openHealthSettings(): Promise<void> {
   }
 }
 
-/** Open the app's OS notification settings screen (manual fallback). */
+/** open the app's os notification settings screen (manual fallback). */
 export async function openNotificationSettings(): Promise<void> {
   await ensurePlugin();
   const plugin = getPlugin();
@@ -516,9 +393,9 @@ export async function openNotificationSettings(): Promise<void> {
 }
 
 /**
- * Android 13+ runtime notification permission (PRD §10).
- * Returns true when system notifications are allowed (or on web /
- * pre-13 devices where no runtime grant is needed). Null plugin → false.
+ * android 13+ runtime notification permission.
+ * returns true when system notifications are allowed (or on web /
+ * pre-13 devices where no runtime grant is needed). null plugin → false.
  */
 export async function checkNotificationPermission(): Promise<boolean> {
   await ensurePlugin();
@@ -535,7 +412,7 @@ export async function checkNotificationPermission(): Promise<boolean> {
   }
 }
 
-/** Prompt the Android 13+ notification permission dialog. */
+/** prompt the android 13+ notification permission dialog. */
 export async function requestNotificationPermission(): Promise<boolean> {
   const ask = async (): Promise<boolean> => {
     // 1. Try custom plugin first for direct Android permission request
@@ -565,9 +442,9 @@ export async function requestNotificationPermission(): Promise<boolean> {
     }
   };
 
-  // Generous ceiling: the caregiver needs time to read and answer the OS
-  // dialog. (A short cutoff here used to silently report "denied" while the
-  // dialog was still open — one cause of the unreliable permission flow.)
+  // generous ceiling: the caregiver needs time to read and answer the os
+  // dialog. a short cutoff here used to silently report "denied" while the
+  // dialog was still open.
   const timeout = new Promise<boolean>((resolve) =>
     setTimeout(() => {
       dlog("requestNotificationPermission: outer timeout, reporting false");
@@ -577,7 +454,7 @@ export async function requestNotificationPermission(): Promise<boolean> {
   return Promise.race([ask(), timeout]);
 }
 
-/** Backend base URL for the native worker (no trailing slash). */
+/** backend base url for the native worker (no trailing slash). */
 export function backendBaseUrl(): string {
   if (typeof window !== "undefined" && window.location?.origin) {
     return window.location.origin;

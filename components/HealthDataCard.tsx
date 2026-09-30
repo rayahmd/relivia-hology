@@ -1,17 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import Image from "next/image";
 import { useAutoMonitor, type PendingNotification } from "@/components/AutoMonitorProvider";
-
-type HealthMetric = {
-  metric: string;
-  today_value: number | null;
-  today_unit: string | null;
-  baseline_value: number | null;
-  change_percent: number | null;
-  has_data: boolean;
-};
+import type { HealthMetric } from "@/lib/metrics";
 
 const METRIC_CONFIG: Record<string, { label: string; icon: string; unit_display: string; card: string; value: string; unit: string; labelCls: string; baselineCls: string; watermark: string }> = {
   sleep_hours: {
@@ -67,8 +58,8 @@ export default function HealthDataCard({
   const [message, setMessage] = useState<string | null>(null);
   const { pushNotification } = useAutoMonitor();
   const simRunning = useRef(false);
-  // Salah satu tombol simulasi sedang berjalan → kunci keduanya agar
-  // tidak bisa di-spam (klik ganda = sesi ganda / pesan menyesatkan).
+  // lock both buttons while either simulation runs (double-clicks in one
+  // frame would otherwise fire duplicate sessions).
   const simBusy = loadingBaseline || loadingChange;
 
   async function handleSync() {
@@ -86,8 +77,8 @@ export default function HealthDataCard({
   }
 
   async function loadDemoData(scenario: "baseline_week" | "change_day") {
-    // Guard sinkron (selain disabled tombol): klik ganda dalam satu frame
-    // sebelum re-render tidak akan menjalankan fetch dua kali.
+    // sync guard on top of disabled buttons: two clicks in one frame
+    // before re-render must not fetch twice.
     if (simRunning.current) return;
     simRunning.current = true;
     const setter = scenario === "baseline_week" ? setLoadingBaseline : setLoadingChange;
@@ -105,11 +96,10 @@ export default function HealthDataCard({
         setMessage(
           `✅ Contoh data baseline 7 hari berhasil dimuat.`
         );
-        // Refresh baseline calculation
         await fetch(`/api/patient/${patientId}/baseline`);
       } else {
-        // Hari perubahan: deteksi + analisis berjalan otomatis di server.
-        // Tampilkan hasil SESUAI kasusnya — jangan ada lagi kegagalan diam-diam.
+        // change day: detection + analysis run server-side. show the
+        // outcome per case — never fail silently.
         const notif = json.notification as { type: PendingNotification["type"]; sessionId: string } | null;
         const showBanner = async (type: PendingNotification["type"], sessionId: string, force: boolean) => {
           pushNotification(
@@ -130,23 +120,22 @@ export default function HealthDataCard({
             const { notifyAgent } = await import("@/lib/nativeBridge");
             await notifyAgent({ type, sessionId });
           } catch {
-            /* banner in-app di atas sudah cukup */
+            /* in-app banner above is enough */
           }
         };
         if (notif?.sessionId) {
-          // Kasus normal: perubahan terdeteksi + sesi/notif baru → banner SEKARANG.
+          // normal case: change detected + new session → banner now.
           await showBanner(notif.type, notif.sessionId, false);
           setMessage(
             `✅ Perubahan terdeteksi — notifikasi sudah muncul, ketuk untuk melihat di halaman Asisten.`
           );
         } else if (json.agentError) {
-          // Gemini gagal: sesi tercatat tapi analisis tidak jalan. Selama ini
-          // disembunyikan — tampilkan agar tidak dikira berhasil.
+          // gemini failed: session recorded but analysis never ran. show it
+          // instead of looking successful.
           setMessage(`Gagal menjalankan agent: ${json.agentError}`);
         } else if (json.agentSessionId) {
-          // Dedup backend (sesi masih aktif): tidak ada sesi/notif baru.
-          // Tampilkan ULANG banner sesi yang ada (force, karena user eksplisit
-          // memintanya) agar tidak buntu di pesan teks.
+          // backend dedup (session still active): no new session. re-show
+          // the existing banner (forced — the user explicitly asked).
           const resumedType =
             json.sessionStatus === "completed" ? "insight_ready" : "agent_question";
           await showBanner(resumedType, json.agentSessionId, true);
@@ -154,8 +143,8 @@ export default function HealthDataCard({
             `✅ Sesi pendalaman masih aktif — notifikasi ditampilkan ulang, ketuk untuk melanjutkan di halaman Asisten.`
           );
         } else {
-          // detected=false (biasanya baseline belum cukup: butuh 3+ sampel
-          // per metrik) → pandu urutan demo yang benar, bukan pesan sukses semu.
+          // detected=false (usually thin baseline: needs 3+ samples per
+          // metric) → guide the correct demo order, not a fake success.
           setMessage(
             `Baseline belum cukup untuk deteksi (butuh 3+ sampel per metrik). Tekan "Seed 7 Hari Baseline" dulu, lalu tekan simulasi lagi.`
           );
@@ -172,7 +161,7 @@ export default function HealthDataCard({
 
   return (
     <div>
-      {/* Metrics Stack — seperti di desain */}
+      {/* metrics stack */}
       <div className="flex flex-col gap-3 mb-5">
         {metrics.map((m) => {
           const cfg = METRIC_CONFIG[m.metric] ?? { label: m.metric, icon: "📊", unit_display: "", card: "bg-white border border-border", value: "text-ink", unit: "text-soft", labelCls: "text-primary-deep", baselineCls: "text-faint", watermark: "text-ink" };
@@ -230,7 +219,7 @@ export default function HealthDataCard({
         })}
       </div>
 
-      {/* Feedback message */}
+      {/* feedback message */}
       {message && (
         <div className={`text-sm rounded-xl px-4 py-3 mb-4 ${
           message.startsWith("✅") ? "bg-green-tint text-green-deep" : "bg-red-tint text-red-deep"
@@ -239,7 +228,7 @@ export default function HealthDataCard({
         </div>
       )}
 
-      {/* Simulasi Health Connect */}
+      {/* health connect simulation */}
       <div className="rounded-[20px] bg-[#7C5CFC] p-5">
         <div className="text-[15px] font-extrabold uppercase tracking-wide text-[#FDEEB3] mb-2">
           Simulasi Health Connect

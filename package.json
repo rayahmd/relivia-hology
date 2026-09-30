@@ -24,7 +24,6 @@
     "@capacitor/share": "^8.0.2",
     "@supabase/ssr": "^0.5.1",
     "@supabase/supabase-js": "^2.45.4",
-    "fast-xml-parser": "^4.5.0",
     "framer-motion": "^13.0.0",
     "jspdf": "^2.5.2",
     "next": "14.2.5",

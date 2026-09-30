@@ -2,6 +2,12 @@
 
 import { useState, useMemo } from "react";
 import type { DailyCheckin, AiInsight, ClinicalInsight, ConsultationBrief } from "@/lib/types";
+import {
+  changePercentValue,
+  formatChangeBadge,
+  formatMetricValue,
+  humanizeMetric,
+} from "@/lib/metrics";
 
 const PERIODS = [
   { days: 7, label: "1 minggu" },
@@ -16,25 +22,7 @@ const METRIC_LABELS: Record<string, string> = {
 };
 
 function metricLabel(metric: string): string {
-  return METRIC_LABELS[metric] ?? metric.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function formatMetricValue(metric: string, value: number): string {
-  if (metric === "steps") return Math.round(value).toLocaleString("id-ID");
-  if (metric === "sleep_hours") return `${value.toLocaleString("id-ID", { maximumFractionDigits: 2 })} jam`;
-  if (metric === "heart_rate") return `${Math.round(value)} bpm`;
-  return String(value);
-}
-
-function changePercent(baseline: number, current: number, stored?: number): number {
-  if (typeof stored === "number" && Number.isFinite(stored)) return stored;
-  if (!baseline) return 0;
-  return ((current - baseline) / Math.abs(baseline)) * 100;
-}
-
-function formatChangeBadge(pct: number): string {
-  const arrow = pct < 0 ? "↓" : pct > 0 ? "↑" : "→";
-  return `${arrow} ${Math.abs(pct).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`;
+  return METRIC_LABELS[metric] ?? humanizeMetric(metric);
 }
 
 export default function SummaryClient({
@@ -127,7 +115,7 @@ export default function SummaryClient({
       y += lines.length * 14 + 18;
     }
 
-    // Prefer agent brief content
+    // prefer agent brief content
     if (brief?.full_content) {
       section("Consultation Brief (AI Agent)", brief.full_content);
     }
@@ -137,7 +125,7 @@ export default function SummaryClient({
     if (brief?.baseline_comparison && Object.keys(brief.baseline_comparison).length) {
       const lines = Object.entries(brief.baseline_comparison).map(([metric, v]) => {
         const val = v as { baseline: number; current: number; change_percent?: number };
-        const pct = changePercent(val.baseline, val.current, val.change_percent);
+        const pct = changePercentValue(val.baseline, val.current, val.change_percent);
         return `${metricLabel(metric)}: ${formatMetricValue(metric, val.baseline)} -> ${formatMetricValue(metric, val.current)} | ${formatChangeBadge(pct)}`;
       });
       section("Perbandingan Baseline", lines.join("\n"));
@@ -165,7 +153,7 @@ export default function SummaryClient({
       "Disusun otomatis oleh Relivia. Bukan alat diagnosis — dokumen ini bahan diskusi, keputusan klinis sepenuhnya di tangan psikiater.",
       marginX, 780, { maxWidth: 500 }
     );
-    doc.save(`ringkasan-konsultasi-${patientName.toLowerCase().replace(/\s+/g, "-")}.pdf`);
+    // single save path for web download + native share sheet.
     const filename = `ringkasan-konsultasi-${patientName.toLowerCase().replace(/\s+/g, "-")}.pdf`;
     setSharingPdf(true);
     setError(null);
@@ -205,7 +193,7 @@ export default function SummaryClient({
         </button>
       </div>
 
-      {/* Generate Agent Brief */}
+      {/* generate agent brief */}
       {agentInsight && !brief && (
         <div className="bg-[#FFF7D6] rounded-[18px] p-5 mb-5 flex items-center justify-between gap-4 flex-wrap">
           <div>
@@ -219,7 +207,7 @@ export default function SummaryClient({
       )}
       {error && <div className="text-sm text-red-deep bg-red-tint rounded-xl px-4 py-3 mb-5">{error}</div>}
 
-      {/* Consultation Brief (Agent) */}
+      {/* consultation brief (agent) */}
       {brief && (
         <div className="bg-[#FFF7D6] rounded-[18px] p-5 md:p-6 mb-5">
           <div className="mb-1">
@@ -260,7 +248,7 @@ export default function SummaryClient({
               <div className="grid gap-2">
                 {Object.entries(brief.baseline_comparison).map(([metric, v]) => {
                   const val = v as { baseline: number; current: number; change_percent?: number };
-                  const pct = changePercent(val.baseline, val.current, val.change_percent);
+                  const pct = changePercentValue(val.baseline, val.current, val.change_percent);
                   return (
                     <div key={metric} className="flex items-center justify-between gap-3 bg-white rounded-[14px] px-4 py-3 text-sm shadow-sm">
                       <span className="font-medium text-ink">{metricLabel(metric)}</span>
@@ -303,7 +291,7 @@ export default function SummaryClient({
         </div>
       )}
 
-      {/* Legacy Summary */}
+      {/* legacy summary */}
       <div className="bg-[#FFF7D6] rounded-[18px] p-5 md:p-6">
         <div className="mb-1">
           <h3 className="text-[17px] font-extrabold text-ink leading-tight">Ringkasan Catatan Harian</h3>

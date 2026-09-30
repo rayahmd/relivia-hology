@@ -12,7 +12,7 @@ export default async function SummaryPage() {
 
   const [{ data: latest }, { data: latestNew }, { data: latestBrief }, { data: checkinsRaw }] =
     await Promise.all([
-      // Legacy insight
+      // legacy insight
       supabase
         .from("ai_insights")
         .select("*")
@@ -20,7 +20,7 @@ export default async function SummaryPage() {
         .order("generated_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
-      // New agent insight
+      // new agent insight
       supabase
         .from("insights")
         .select("*")
@@ -28,7 +28,7 @@ export default async function SummaryPage() {
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
-      // Latest consultation brief
+      // latest consultation brief
       supabase
         .from("consultation_briefs")
         .select("*")

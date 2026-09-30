@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-
-const GEMINI_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent";
+import { extractGeminiText, postGemini } from "@/lib/agentCore";
+import { changePercentValue, formatChangeBadge, formatMetricValue, humanizeMetric } from "@/lib/metrics";
+import { getOwnedPatient } from "@/lib/getOrCreatePatient";
 
 const METRIC_LABELS: Record<string, string> = {
   steps: "Aktivitas harian",
@@ -17,30 +17,20 @@ const METRIC_UNITS: Record<string, string> = {
 };
 
 function metricLabel(metric: string): string {
-  return METRIC_LABELS[metric] ?? metric.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function formatMetricValue(metric: string, value: number): string {
-  if (metric === "steps") return Math.round(value).toLocaleString("id-ID");
-  if (metric === "sleep_hours") return `${value.toLocaleString("id-ID", { maximumFractionDigits: 2 })} jam`;
-  if (metric === "heart_rate") return `${Math.round(value)} bpm`;
-  return String(value);
+  return METRIC_LABELS[metric] ?? humanizeMetric(metric);
 }
 
 function formatChangePercent(baseline: number, current: number): string {
   if (!baseline) return "";
-  const pct = ((current - baseline) / Math.abs(baseline)) * 100;
-  const arrow = pct < 0 ? "↓" : pct > 0 ? "↑" : "→";
-  return `${arrow} ${Math.abs(pct).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`;
+  return formatChangeBadge(changePercentValue(baseline, current));
 }
 
-function humanizeKeyChange(raw: string, metric?: string, baseline?: number, current?: number): string {
+function humanizeKeyChange(raw: string): string {
   let s = raw;
-  // Replace raw variable names with human labels if model still emits them
+  // replace raw variable names with human labels if the model emits them.
   for (const [key, label] of Object.entries(METRIC_LABELS)) {
     s = s.replace(new RegExp(key.replace(/_/g, "[_ ]?"), "gi"), label);
   }
-  s = s.replace(/sleep_hours/gi, "Durasi tidur").replace(/\bsteps\b/gi, "Aktivitas harian");
   return s;
 }
 
@@ -66,39 +56,28 @@ Respond with valid JSON:
   "full_summary": "2-3 sentence narrative combining wearable changes and caregiver observation, Bahasa Indonesia"
 }`;
 
-/** Gemini call with a hard timeout — a hanging upstream must never wedge the UI. */
+/** gemini call with a hard timeout — hanging upstream never wedges the ui. */
 const GEMINI_TIMEOUT_MS = 60_000;
 
 async function callGemini(context: string): Promise<string> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), GEMINI_TIMEOUT_MS);
+  let res: Response;
   try {
-    const res = await fetch(GEMINI_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": process.env.GEMINI_API_KEY ?? "",
-      },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: BRIEF_SYSTEM_PROMPT }] },
-        contents: [{ role: "user", parts: [{ text: context }] }],
-        generationConfig: { maxOutputTokens: 1500, temperature: 0.2 },
-      }),
-      cache: "no-store",
-      signal: ctrl.signal,
+    res = await postGemini({
+      systemPrompt: BRIEF_SYSTEM_PROMPT,
+      contents: [{ role: "user", parts: [{ text: context }] }],
+      maxOutputTokens: 1500,
+      temperature: 0.2,
+      timeoutMs: GEMINI_TIMEOUT_MS,
     });
-
-    if (!res.ok) throw new Error(`Gemini ${res.status}`);
-    const data = await res.json();
-    return data.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ?? "";
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
       throw new Error("BRIEF_GEMINI_TIMEOUT");
     }
     throw err;
-  } finally {
-    clearTimeout(timer);
   }
+
+  if (!res.ok) throw new Error(`Gemini ${res.status}`);
+  return extractGeminiText(await res.json());
 }
 
 export async function GET(
@@ -112,16 +91,10 @@ export async function GET(
 
     const { patientId } = params;
 
-    // Verify ownership
-    const { data: patient } = await supabase
-      .from("patients")
-      .select("*")
-      .eq("id", patientId)
-      .eq("caregiver_id", user.id)
-      .single();
+    const patient = await getOwnedPatient(supabase, patientId, user.id);
     if (!patient) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    // Get latest consultation brief
+    // latest consultation brief
     const { data: brief } = await supabase
       .from("consultation_briefs")
       .select("*")
@@ -149,16 +122,10 @@ export async function POST(
     const body = await req.json().catch(() => ({}));
     const insight_id: string | undefined = body.insight_id;
 
-    // Verify ownership
-    const { data: patient } = await supabase
-      .from("patients")
-      .select("*")
-      .eq("id", patientId)
-      .eq("caregiver_id", user.id)
-      .single();
+    const patient = await getOwnedPatient(supabase, patientId, user.id);
     if (!patient) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    // Fetch the referenced insight
+    // referenced insight (or latest when no id given)
     let insight = null;
     if (insight_id) {
       const { data } = await supabase
@@ -178,7 +145,7 @@ export async function POST(
       insight = data;
     }
 
-    // Fetch recent checkins for medication info
+    // recent checkins for medication info
     const { data: checkins } = await supabase
       .from("daily_checkins")
       .select("*")
@@ -186,7 +153,7 @@ export async function POST(
       .order("checkin_date", { ascending: false })
       .limit(7);
 
-    // Fetch baselines for comparison
+    // baselines for comparison
     const { data: baselines } = await supabase
       .from("baselines")
       .select("*")
@@ -195,7 +162,7 @@ export async function POST(
     const baselineMap: Record<string, number> = {};
     for (const b of baselines ?? []) baselineMap[b.metric] = b.baseline_value;
 
-    // Get related agent session
+    // related agent session
     let session = null;
     if (insight?.agent_session_id) {
       const { data } = await supabase
@@ -259,10 +226,10 @@ Buat Consultation Brief yang komprehensif berdasarkan semua informasi di atas. T
     try {
       const cleaned = rawGemini.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
       briefData = JSON.parse(cleaned);
-      // Normalize: never leak raw variable names to the client
+      // never leak raw variable names to the client
       briefData.key_changes = (briefData.key_changes ?? []).map((c) => humanizeKeyChange(String(c)));
     } catch {
-      // Deterministic grounded fallback — no raw data dump, no invented facts
+      // grounded fallback — no raw dump, no invented facts
       const changes = (insight?.detected_changes ?? []) as { metric: string; baseline: number; current: number; change_percent: number }[];
       const caregiverBits = [
         insight?.context_notes,
@@ -334,7 +301,7 @@ Buat Consultation Brief yang komprehensif berdasarkan semua informasi di atas. T
   } catch (err) {
     console.error("[consultation]", err);
     const msg = String(err);
-    // Timeout upstream → 504 + pesan ramah agar UI selalu dapat respons.
+    // timeout upstream → 504 with a friendly message.
     if (msg.includes("BRIEF_GEMINI_TIMEOUT")) {
       return NextResponse.json(
         { error: "AI sedang sibuk dan tidak merespons tepat waktu. Coba lagi." },

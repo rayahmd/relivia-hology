@@ -2,14 +2,13 @@ import { isNative } from "@/lib/nativeBridge";
 import type { jsPDF } from "jspdf";
 
 /**
- * Save/share a generated PDF.
+ * save/share a generated pdf.
  *
- * - Web: classic `doc.save()` browser download (unchanged).
- * - Android APK: the Capacitor WebView ignores `<a download>`, so `save()`
- *   silently does nothing. Instead write the file to the app cache and open
- *   the OS share sheet — the caregiver can save it to Files/Drive or send
- *   it via WhatsApp, etc. Cache dir needs no storage permission (Android 10+
- *   scoped storage) and Capacitor's FileProvider serves the URI to the sheet.
+ * - web: classic `doc.save()` browser download.
+ * - android apk: the webview ignores `<a download>`, so `save()` silently
+ *   does nothing. instead write to the app cache and open the os share
+ *   sheet. cache dir needs no storage permission (scoped storage) and
+ *   capacitor's fileprovider serves the uri to the sheet.
  */
 export async function saveOrSharePdf(doc: jsPDF, filename: string): Promise<"saved" | "shared"> {
   let native = false;

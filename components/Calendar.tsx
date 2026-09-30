@@ -23,7 +23,7 @@ export default function Calendar({ checkins }: { checkins: DailyCheckin[] }) {
     const entry = byDate.get(dateStr);
     const isToday = dateStr === now.toISOString().slice(0, 10);
 
-    // Styling matching screenshot: vibrant soft pink/magenta/purple rounded pills with white text
+    // pill colors per state: default pink, entry magenta, flagged red.
     let cls = "aspect-square rounded-2xl flex flex-col items-center justify-center text-sm font-bold bg-[#F5D0FE] text-[#86198F] transition-all";
     
     if (entry) {

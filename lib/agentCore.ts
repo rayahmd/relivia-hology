@@ -1,13 +1,5 @@
-/**
- * Shared Relivia Agent core (PRD §16–§19).
- *
- * Single source of truth for the investigation prompt, Gemini call, and
- * response parsing — used by both the manual /api/agent/investigate route
- * and the automatic pipeline (lib/autoTrigger.ts) so behavior is identical.
- *
- * Safety rules are part of the system prompt: never diagnose, never predict
- * relapse, never give medication advice (PRD out-of-scope).
- */
+// single source of truth for agent prompt, gemini transport, decision
+// parsing, and answer options — manual + automatic pipelines share it.
 
 const GEMINI_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent";
@@ -81,20 +73,13 @@ export type AgentDecision = {
   insight?: AgentInsight;
 };
 
-/** Strict PRD §31: Gemini failure throws — callers must NOT fabricate insights. */
+/** gemini failure throws — callers must not fabricate insights. */
 export async function callGeminiInvestigate(contextText: string): Promise<string> {
-  const res = await fetch(GEMINI_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": process.env.GEMINI_API_KEY ?? "",
-    },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: AGENT_SYSTEM_PROMPT }] },
-      contents: [{ role: "user", parts: [{ text: contextText }] }],
-      generationConfig: { maxOutputTokens: 1200, temperature: 0.3 },
-    }),
-    cache: "no-store",
+  const res = await postGemini({
+    systemPrompt: AGENT_SYSTEM_PROMPT,
+    contents: [{ role: "user", parts: [{ text: contextText }] }],
+    maxOutputTokens: 1200,
+    temperature: 0.3,
   });
 
   if (!res.ok) {
@@ -102,20 +87,100 @@ export async function callGeminiInvestigate(contextText: string): Promise<string
     throw new Error(`Gemini error ${res.status}: ${err}`);
   }
 
-  const data = await res.json();
+  return extractGeminiText(await res.json());
+}
+
+export type GeminiContents = Array<{
+  role: string;
+  parts: Array<{ text: string }>;
+}>;
+
+/** shared gemini transport: same headers + no-store everywhere. */
+export async function postGemini(opts: {
+  model?: string;
+  systemPrompt: string;
+  contents: GeminiContents;
+  maxOutputTokens: number;
+  temperature: number;
+  jsonMode?: boolean;
+  timeoutMs?: number;
+}): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = opts.timeoutMs ? setTimeout(() => ctrl.abort(), opts.timeoutMs) : null;
+  try {
+    return await fetch(
+      opts.model ?? GEMINI_URL,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": process.env.GEMINI_API_KEY ?? "",
+        },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: opts.systemPrompt }] },
+          contents: opts.contents,
+          generationConfig: {
+            maxOutputTokens: opts.maxOutputTokens,
+            temperature: opts.temperature,
+            ...(opts.jsonMode ? { responseMimeType: "application/json" } : {}),
+          },
+        }),
+        cache: "no-store",
+        ...(timer ? { signal: ctrl.signal } : {}),
+      }
+    );
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** join model text parts into one string. */
+export function extractGeminiText(data: {
+  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+}): string {
   return (
-    data.candidates?.[0]?.content?.parts
-      ?.map((p: { text?: string }) => p.text ?? "")
-      .join("") ?? ""
+    data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? ""
   );
 }
 
-/** Parse agent JSON; falls back to one default question when unparseable. */
+/** strip code fences before json.parse. */
+export function cleanGeminiJson(raw: string): string {
+  return raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+}
+
+/** per-round answer options live in session context (no db migration). */
+export type AgentChange = {
+  metric: string;
+  label: string;
+  baseline_value: number;
+  current_value: number;
+  change_percent: number;
+  severity: string;
+};
+
+export type AgentSessionContext = {
+  changes?: AgentChange[];
+  question_options?: string[][];
+  [key: string]: unknown;
+};
+
+export function getStoredOptions(ctx: AgentSessionContext, round: number): string[] | null {
+  const stored = ctx.question_options?.[round];
+  return stored && stored.length >= 2 ? stored : null;
+}
+
+export function withAppendedOptions(
+  ctx: AgentSessionContext,
+  options: string[]
+): AgentSessionContext {
+  return { ...ctx, question_options: [...(ctx.question_options ?? []), options] };
+}
+
+/** parse agent json; unparseable falls back to the default question. */
 export function parseAgentDecision(raw: string): AgentDecision {
   try {
-    const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    const parsed = JSON.parse(cleaned) as AgentDecision;
-    // AI sometimes omits options — guarantee contextual ones server-side.
+    const parsed = JSON.parse(cleanGeminiJson(raw)) as AgentDecision;
+    // ai sometimes omits options — guarantee contextual ones server-side.
     if (parsed.needs_more_info && parsed.question) {
       parsed.answer_options = normalizeAnswerOptions(parsed.answer_options, parsed.question, parsed.question_focus);
     }
@@ -131,12 +196,11 @@ export function parseAgentDecision(raw: string): AgentDecision {
 }
 
 /**
- * Deterministic contextual options by question topic. Used whenever the AI
- * omits answer_options (or Gemini is down), so every question — sleep,
- * social, medication, mood — still gets relevant shortcuts. Keyword match
- * on the question text keeps old sessions (no stored options) working too.
+ * deterministic options by question topic for when the ai omits
+ * answer_options (or gemini is down). keyword match on the question text
+ * also keeps old sessions without stored options working.
  */
-// ponytail: keyword heuristic, upgrade to per-question AI options only (already primary path)
+// ponytail: keyword heuristic, upgrade to per-question ai options only (already primary path)
 export function getFallbackAnswerOptions(question: string, focus?: string): string[] {
   const t = `${focus ?? ""} ${question}`.toLowerCase();
   if (/tidur|sleep|begadang|insomnia|bangun malam|kantuk/.test(t))
@@ -156,7 +220,7 @@ export function getFallbackAnswerOptions(question: string, focus?: string): stri
   return ["Ya, lebih sering dari biasanya", "Tidak, masih normal", "Tidak terlalu yakin"];
 }
 
-/** Keep AI options (max 4, trimmed, deduped) or fall back by topic. */
+/** keep ai options (max 4, trimmed, deduped) or fall back by topic. */
 export function normalizeAnswerOptions(
   options: unknown,
   question: string,

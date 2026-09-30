@@ -16,10 +16,9 @@ export default async function AgentPage({
 }) {
   const patient = await getOrCreatePatient();
 
-  // NOTE: tidak ada query tambahan di sini — AgentPanel memuat sesinya
-  // sendiri secara client-side setelah shell instan tampil. Query
-  // "activeSession" yang lama dihapus: hasilnya tidak dipakai (void) tapi
-  // memakan 1 roundtrip serial di setiap kunjungan /agent.
+  // no extra query here — the panel loads its session client-side after
+  // the shell paints instantly. the old active-session query is gone: its
+  // result was unused but cost one serial roundtrip per visit.
 
   return (
     <div className="min-h-screen flex flex-col">

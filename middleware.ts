@@ -22,23 +22,17 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  // Auth check tanpa network roundtrip: getClaims() memverifikasi JWT
-  // secara lokal dari cookie (0 RTT saat token valid; refresh otomatis
-  // hanya bila expired). Sebelumnya getUser() memanggil Auth server di
-  // SETIAP navigasi protected (+ onboarding query sesudahnya) sehingga
-  // tiap pindah halaman membayar 2 roundtrip serial (~0.5–1s+ di mobile).
-  // Keamanan tidak berkurang: RLS Postgres tetap memverifikasi JWT per
-  // query, dan bila project memakai HS256 getClaims otomatis fallback ke
-  // getUser (perilaku lama). Server Components/API tetap memakai getUser.
+  // auth check without a network roundtrip: getClaims() verifies the jwt
+  // locally from the cookie. rls still verifies per query, so security
+  // is unchanged. server components / api routes keep using getUser.
   const { data: claimsData } = await supabase.auth.getClaims();
   const userId = claimsData?.claims?.sub as string | undefined;
 
   const pathname = request.nextUrl.pathname;
 
-  // No landing page (mobile-app focus): "/" always resolves into the app.
-  // Logged-in users go to /dashboard; guests go to /login. The ?code=
-  // exception preserves the OAuth safety net (Supabase sometimes returns
-  // the auth code to the Site URL root — /auth/callback exchange must run).
+  // no landing page: "/" always resolves into the app. logged-in users
+  // go to /dashboard, guests to /login. the ?code= exception preserves the
+  // oauth safety net (provider sometimes returns the code to the site root).
   if (pathname === "/") {
     if (!userId && request.nextUrl.searchParams.has("code")) return response;
     const redirectUrl = request.nextUrl.clone();
@@ -46,10 +40,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  // User yang sudah login tidak boleh melihat /login sedetik pun:
-  // tendang ke /dashboard di server (sebelum HTML login terkirim).
-  // Gate onboarding di bawah / di /dashboard akan meneruskan ke
-  // /onboarding bila perlu — tetap tanpa paint halaman login.
+  // logged-in users never see /login: redirect server-side before its
+  // html is sent. the onboarding gate below forwards to /onboarding after.
   if (userId && pathname === "/login") {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/dashboard";
@@ -65,10 +57,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  // Gate protected pages (but not /onboarding itself, to avoid a redirect loop)
-  // behind onboarding completeness: a caregiver must have set patient
-  // name/age before they can use the app. One lightweight query per navigation
-  // is an acceptable tradeoff for correctness over a stale cached flag.
+  // gate protected pages (not /onboarding itself, to avoid a loop)
+  // behind onboarding completeness. one lightweight query per navigation
+  // beats a stale cached flag.
   const onboardingRequiredPaths = ["/dashboard", "/checkin", "/insight", "/summary", "/community", "/agent", "/health"];
   const needsOnboardingCheck = onboardingRequiredPaths.some((p) => request.nextUrl.pathname.startsWith(p));
 

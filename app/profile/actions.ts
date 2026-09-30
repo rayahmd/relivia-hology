@@ -58,8 +58,8 @@ export async function updateProfile(input: ProfileInput) {
     if (error) throw error;
   }
 
-  // All pages below are force-dynamic but revalidate anyway so any cached
-  // shell picks up the new names immediately.
+  // pages below are force-dynamic but revalidate anyway so cached
+  // shells pick up the new names immediately.
   for (const p of ["/profile", "/dashboard", "/community", "/agent", "/checkin", "/health", "/insight", "/summary"]) {
     revalidatePath(p);
   }

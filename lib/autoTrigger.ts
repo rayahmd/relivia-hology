@@ -5,28 +5,19 @@ import {
   callGeminiInvestigate,
   getFallbackAnswerOptions,
   parseAgentDecision,
+  withAppendedOptions,
+  type AgentSessionContext,
 } from "@/lib/agentCore";
 import type { NotificationType } from "@/lib/notify";
 
-/** An `investigating` session older than this never resolves — treat as dead. */
+// investigating session older than this never resolves — treat as dead.
 export const STALE_INVESTIGATING_MS = 15 * 60 * 1000;
 
-/**
- * Automatic monitoring pipeline (PRD §13–§17, §23–§24).
- *
- *   Health Data → Baseline → Change Detection → [dedup] →
- *   Relivia Agent → NEED MORE INFO? → notification {type, sessionId}
- *
- * Called automatically at the end of POST /api/health-sync — no caregiver
- * button press required (PRD §15, core success criterion §39).
- *
- * Deduplication (PRD §24): one patient may have only ONE active
- * investigation. If a session is already investigating/waiting, no new
- * session and no new notification is created.
- *
- * Gemini failure (PRD §31, strict): the session stays `investigating` with
- * the error recorded in analysis_history. No fake insight is generated.
- */
+// automatic monitoring pipeline:
+// health data → baseline → change detection → [dedup] → agent → notification.
+// runs at the end of POST /api/health-sync, no button press needed.
+// dedup: one patient has at most one active investigation.
+// gemini failure: session stays alive via fallback question, never wedged.
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = any;
@@ -55,8 +46,8 @@ export async function findActiveSession(
     .limit(1)
     .maybeSingle();
   if (!data) return null;
-  // A stale `investigating` session (Gemini died mid-flight) is dead:
-  // abandon it so it can never block the pipeline forever.
+  // stale investigating (gemini died mid-flight) is dead: abandon it so
+  // it can never block the pipeline forever.
   if (data.status === "investigating" && Date.now() - new Date(data.updated_at).getTime() > STALE_INVESTIGATING_MS) {
     await supabase
       .from("agent_sessions")
@@ -82,7 +73,7 @@ export async function runAutomaticPipeline(
   const patientId = patient.id;
   const today = new Date().toISOString().slice(0, 10);
 
-  // ── Load today's health + latest check-in ──
+  // today health + latest check-in
   const { data: healthData } = await supabase
     .from("health_data")
     .select("*")
@@ -114,13 +105,13 @@ export async function runAutomaticPipeline(
     currentMetrics.social_interaction = todayCheckin.social_interaction;
   }
 
-  // ── Change detection (PRD §13) ──
+  // change detection
   const changeResults = runChangeDetection(currentMetrics, baselineMap);
   if (!hasSignificantChange(changeResults)) {
     return { detected: false, changes: changeResults, sessionId: null, notification: null, skippedReason: "no_change" };
   }
 
-  // ── Persist detected changes ──
+  // persist detected changes
   const changesToSave = changeResults
     .filter((r) => r.severity !== "normal")
     .map((r) => ({
@@ -135,7 +126,7 @@ export async function runAutomaticPipeline(
     await supabase.from("detected_changes").insert(changesToSave);
   }
 
-  // ── Deduplication (PRD §24) ──
+  // dedup
   const active = await findActiveSession(supabase, patientId);
   if (active) {
     return {
@@ -147,11 +138,18 @@ export async function runAutomaticPipeline(
     };
   }
 
-  // ── Create agent session (PRD §15–§16) ──
+  // new agent session
   const triggerDescription = changeResults
     .filter((r) => r.severity !== "normal")
     .map((r) => `${r.label}: ${r.current_value} (baseline: ${r.baseline_value})`)
     .join(", ");
+
+  const baseContext: AgentSessionContext = {
+    changes: changeResults,
+    todayCheckin: todayCheckin ?? null,
+    baselines: baselineMap,
+    triggeredBy: "automatic_health_sync",
+  };
 
   const { data: session, error: sessionError } = await supabase
     .from("agent_sessions")
@@ -160,12 +158,7 @@ export async function runAutomaticPipeline(
       trigger: triggerDescription,
       trigger_source: "automatic_health_sync",
       status: "investigating",
-      current_context: {
-        changes: changeResults,
-        todayCheckin: todayCheckin ?? null,
-        baselines: baselineMap,
-        triggeredBy: "automatic_health_sync",
-      },
+      current_context: baseContext,
       questions_asked: [],
       caregiver_responses: [],
       analysis_history: [],
@@ -174,7 +167,7 @@ export async function runAutomaticPipeline(
     .single();
   if (sessionError || !session) throw sessionError ?? new Error("Failed to create agent session");
 
-  // ── Agent investigation (PRD §16–§17) ──
+  // agent investigation
   const contextText = `
 Pasien: ${patient.name}
 Tanggal investigasi: ${today}
@@ -206,9 +199,9 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
   try {
     rawResponse = await callGeminiInvestigate(contextText);
   } catch (err) {
-    // PRD §31 strict, without wedging: record the failure but keep the
-    // investigation alive via the default question — a session parked in
-    // `investigating` would spin the UI spinner forever and block dedup.
+    // gemini down: record the failure but keep the session alive via the
+    // default question — a session parked in investigating spins the ui
+    // spinner forever and blocks dedup.
     const message = err instanceof Error ? err.message : String(err);
     await supabase
       .from("agent_sessions")
@@ -216,13 +209,7 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
         analysis_history: [{ round: 1, error: "Agent analysis unavailable", detail: message, fallback_question: DEFAULT_QUESTION }],
         status: "waiting_for_caregiver",
         questions_asked: [DEFAULT_QUESTION],
-        current_context: {
-          changes: changeResults,
-          todayCheckin: todayCheckin ?? null,
-          baselines: baselineMap,
-          triggeredBy: "automatic_health_sync",
-          question_options: [getFallbackAnswerOptions(DEFAULT_QUESTION, DEFAULT_QUESTION_FOCUS)],
-        },
+        current_context: withAppendedOptions(baseContext, getFallbackAnswerOptions(DEFAULT_QUESTION, DEFAULT_QUESTION_FOCUS)),
         updated_at: new Date().toISOString(),
       })
       .eq("id", session.id);
@@ -236,7 +223,7 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
 
   const parsed = parseAgentDecision(rawResponse);
 
-  // Guard: `completed` without an insight object strands the caregiver.
+  // completed without an insight strands the caregiver.
   if (!parsed.needs_more_info && !parsed.insight) {
     parsed.needs_more_info = true;
     parsed.question = parsed.question ?? DEFAULT_QUESTION;
@@ -251,13 +238,10 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
         ? {
             status: "waiting_for_caregiver",
             questions_asked: [parsed.question],
-            current_context: {
-              changes: changeResults,
-              todayCheckin: todayCheckin ?? null,
-              baselines: baselineMap,
-              triggeredBy: "automatic_health_sync",
-              question_options: [parsed.answer_options ?? getFallbackAnswerOptions(parsed.question ?? "", parsed.question_focus)],
-            },
+            current_context: withAppendedOptions(
+              baseContext,
+              parsed.answer_options ?? getFallbackAnswerOptions(parsed.question ?? "", parsed.question_focus)
+            ),
           }
         : { status: "completed" }),
       updated_at: new Date().toISOString(),
@@ -290,7 +274,7 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
     };
   }
 
-  // Agent needs more information → caregiver notification (PRD §21, §23).
+  // agent needs more information → caregiver notification.
   return {
     detected: true,
     changes: changeResults,

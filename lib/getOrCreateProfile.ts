@@ -2,10 +2,9 @@ import { createClient } from "@/lib/supabase/server";
 import type { Profile } from "@/lib/types";
 
 /**
- * Every caregiver gets a lightweight public profile the first time they touch
- * a community feature (viewing or posting). display_name defaults to the
- * local part of their email since we don't collect a real name at signup —
- * it can be changed later from the community page.
+ * every caregiver gets a lightweight public profile on first touch of a
+ * community feature. display_name defaults to the email local part (no
+ * real name collected at signup) and can be changed later.
  */
 export async function getOrCreateProfile(): Promise<Profile> {
   const supabase = createClient();

@@ -1,15 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getOwnedPatient } from "@/lib/getOrCreatePatient";
 
-/**
- * POST /api/agent/session/:id/cancel
- *
- * Abandons a wedged session (e.g. stuck in `investigating`). The status
- * CHECK constraint only allows investigating/waiting_for_caregiver/
- * completed, so cancellation resolves to `completed` with a marker in
- * analysis_history — the session route reports it as `cancelled` and
- * dedup/dispatch ignore it since it carries no insight.
- */
+// abandon a wedged session (e.g. stuck investigating). the status check
+// only allows investigating/waiting/completed, so cancellation resolves
+// to completed with a marker in analysis_history.
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -28,12 +23,7 @@ export async function POST(
       .single();
     if (!session) return NextResponse.json({ error: "Session not found" }, { status: 404 });
 
-    const { data: patient } = await supabase
-      .from("patients")
-      .select("id")
-      .eq("id", session.patient_id)
-      .eq("caregiver_id", user.id)
-      .single();
+    const patient = await getOwnedPatient(supabase, session.patient_id, user.id);
     if (!patient) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     await supabase

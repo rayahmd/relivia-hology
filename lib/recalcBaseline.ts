@@ -1,20 +1,7 @@
 import { buildCheckinsBaselines, buildHealthBaselines } from "@/lib/baseline";
 
-type SupabaseLike = {
-  from: (table: string) => {
-    select: (cols: string) => unknown;
-    upsert: (row: unknown, opts?: unknown) => PromiseLike<unknown>;
-  };
-};
-
-/**
- * Shared baseline recomputation (extracted from
- * app/api/patient/[id]/baseline so both the manual "Hitung Ulang Baseline"
- * button and the automatic /api/health-sync pipeline use one code path).
- *
- * Reads last-30-day check-ins + health data, upserts per-metric baselines.
- * Returns the computed map { metric -> baseline_value } for change detection.
- */
+// shared recompute used by the manual button and the health-sync pipeline.
+// reads last-30-day data, upserts per-metric baselines, returns the map.
 export async function recalcBaselines(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
@@ -70,8 +57,7 @@ export async function recalcBaselines(
   const map: Record<string, number> = {};
   for (const b of all) map[b.metric] = b.baseline_value;
 
-  // Merge with previously stored baselines (metrics without fresh samples
-  // keep their last known value instead of disappearing).
+  // metrics without fresh samples keep their last stored value.
   const { data: stored } = await supabase
     .from("baselines")
     .select("metric, baseline_value")
@@ -82,5 +68,3 @@ export async function recalcBaselines(
 
   return map;
 }
-
-export type { SupabaseLike };

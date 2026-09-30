@@ -2,18 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { runChangeDetection, hasSignificantChange } from "@/lib/changeDetection";
 import {
-  AGENT_SYSTEM_PROMPT,
   DEFAULT_QUESTION,
   DEFAULT_QUESTION_FOCUS,
   callGeminiInvestigate,
   getFallbackAnswerOptions,
+  getStoredOptions,
   parseAgentDecision,
+  withAppendedOptions,
+  type AgentSessionContext,
 } from "@/lib/agentCore";
 import { findActiveSession, STALE_INVESTIGATING_MS } from "@/lib/autoTrigger";
-
-// Re-exported for documentation; the prompt lives in lib/agentCore.ts so the
-// manual and automatic pipelines share one source of truth (PRD §16).
-void AGENT_SYSTEM_PROMPT;
+import { getOwnedPatient } from "@/lib/getOrCreatePatient";
 
 export async function POST(req: NextRequest) {
   try {
@@ -27,31 +26,24 @@ export async function POST(req: NextRequest) {
     const patientId: string = body.patient_id;
     if (!patientId) return NextResponse.json({ error: "patient_id required" }, { status: 400 });
 
-    // Verify patient belongs to caregiver
-    const { data: patient } = await supabase
-      .from("patients")
-      .select("*")
-      .eq("id", patientId)
-      .eq("caregiver_id", user.id)
-      .single();
+    // patient belongs to caregiver
+    const patient = await getOwnedPatient(supabase, patientId, user.id);
     if (!patient) return NextResponse.json({ error: "Patient not found" }, { status: 404 });
 
-    // Dedup: resume a live session instead of spawning duplicates.
-    // A stale `investigating` session (Gemini died mid-flight) is abandoned
-    // so it can never wedge the agent in "analyzing" forever.
+    // dedup: resume a live session instead of spawning duplicates. a stale
+    // investigating session is abandoned so it can't wedge the agent forever.
     const active = await findActiveSession(supabase, patientId);
     if (active) {
       if (active.status === "waiting_for_caregiver") {
         const qs: string[] = active.questions_asked ?? [];
-        const ctx = (active.current_context ?? {}) as { changes?: unknown[]; question_options?: string[][] };
+        const ctx = (active.current_context ?? {}) as AgentSessionContext;
         const lastQ = qs.length > 0 ? qs[qs.length - 1] : DEFAULT_QUESTION;
-        const stored = ctx.question_options?.[qs.length - 1];
         return NextResponse.json({
           status: "waiting_for_caregiver",
           session_id: active.id,
           question: lastQ,
           question_focus: "resumed_session",
-          answer_options: stored && stored.length >= 2 ? stored : getFallbackAnswerOptions(lastQ),
+          answer_options: getStoredOptions(ctx, qs.length - 1) ?? getFallbackAnswerOptions(lastQ),
           changes: ctx.changes ?? [],
         });
       }
@@ -80,7 +72,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Fetch recent health data (last 3 days)
+    // recent health data (3 days), today + recent check-ins, baselines.
     const { data: healthData } = await supabase
       .from("health_data")
       .select("*")
@@ -88,7 +80,7 @@ export async function POST(req: NextRequest) {
       .order("recorded_at", { ascending: false })
       .limit(9); // up to 3 days × 3 metrics
 
-    // Fetch today's & recent check-ins (last 7 days)
+    // today + recent check-ins (7 days)
     const { data: checkins } = await supabase
       .from("daily_checkins")
       .select("*")
@@ -96,7 +88,6 @@ export async function POST(req: NextRequest) {
       .order("checkin_date", { ascending: false })
       .limit(7);
 
-    // Fetch baselines
     const { data: baselines } = await supabase
       .from("baselines")
       .select("*")
@@ -107,7 +98,6 @@ export async function POST(req: NextRequest) {
       baselineMap[b.metric] = b.baseline_value;
     }
 
-    // Build current metrics from today's data
     const today = new Date().toISOString().slice(0, 10);
     const todayHealth = (healthData ?? []).filter((h) => h.recorded_at === today);
     const todayCheckin = (checkins ?? [])[0];
@@ -122,7 +112,6 @@ export async function POST(req: NextRequest) {
       currentMetrics.social_interaction = todayCheckin.social_interaction;
     }
 
-    // Run change detection
     const changeResults = runChangeDetection(currentMetrics, baselineMap);
     const hasChange = hasSignificantChange(changeResults);
 
@@ -134,7 +123,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Save detected changes to DB
+    // save detected changes
     const changesToSave = changeResults
       .filter((r) => r.severity !== "normal")
       .map((r) => ({
@@ -150,11 +139,17 @@ export async function POST(req: NextRequest) {
       await supabase.from("detected_changes").insert(changesToSave);
     }
 
-    // Create agent session
+    // new agent session
     const triggerDescription = changeResults
       .filter((r) => r.severity !== "normal")
       .map((r) => `${r.label}: ${r.current_value} (baseline: ${r.baseline_value})`)
       .join(", ");
+
+    const baseContext: AgentSessionContext = {
+      changes: changeResults,
+      todayCheckin: todayCheckin ?? null,
+      baselines: baselineMap,
+    };
 
     const { data: session, error: sessionError } = await supabase
       .from("agent_sessions")
@@ -163,11 +158,7 @@ export async function POST(req: NextRequest) {
         trigger: triggerDescription,
         trigger_source: "manual",
         status: "investigating",
-        current_context: {
-          changes: changeResults,
-          todayCheckin: todayCheckin ?? null,
-          baselines: baselineMap,
-        },
+        current_context: baseContext,
         questions_asked: [],
         caregiver_responses: [],
         analysis_history: [],
@@ -177,7 +168,6 @@ export async function POST(req: NextRequest) {
 
     if (sessionError) throw sessionError;
 
-    // Build Gemini context
     const contextText = `
 Pasien: ${patient.name}
 Tanggal investigasi: ${today}
@@ -209,8 +199,8 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
     try {
       rawResponse = await callGeminiInvestigate(contextText);
     } catch (err) {
-      // Gemini down → graceful degradation: continue with the default
-      // question instead of leaving the session stuck in `investigating`.
+      // gemini down: keep the session alive with the default question
+      // instead of wedging it in investigating.
       const message = err instanceof Error ? err.message : String(err);
       const fallbackOptions = getFallbackAnswerOptions(DEFAULT_QUESTION, DEFAULT_QUESTION_FOCUS);
       await supabase
@@ -221,12 +211,7 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
           ],
           status: "waiting_for_caregiver",
           questions_asked: [DEFAULT_QUESTION],
-          current_context: {
-            changes: changeResults,
-            todayCheckin: todayCheckin ?? null,
-            baselines: baselineMap,
-            question_options: [fallbackOptions],
-          },
+          current_context: withAppendedOptions(baseContext, fallbackOptions),
           updated_at: new Date().toISOString(),
         })
         .eq("id", session.id);
@@ -243,15 +228,14 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
 
     const parsed = parseAgentDecision(rawResponse);
 
-    // Guard: a `completed` verdict without an insight object would strand
-    // the caregiver (no question rendered). Degrade to the default question.
+    // completed without an insight strands the caregiver (no question
+    // rendered) — degrade to the default question.
     if (!parsed.needs_more_info && !parsed.insight) {
       parsed.needs_more_info = true;
       parsed.question = parsed.question ?? DEFAULT_QUESTION;
       parsed.question_focus = parsed.question_focus ?? DEFAULT_QUESTION_FOCUS;
     }
 
-    // Update session with analysis
     await supabase
       .from("agent_sessions")
       .update({
@@ -260,12 +244,10 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
           ? {
               status: "waiting_for_caregiver",
               questions_asked: [parsed.question],
-              current_context: {
-                changes: changeResults,
-                todayCheckin: todayCheckin ?? null,
-                baselines: baselineMap,
-                question_options: [parsed.answer_options ?? getFallbackAnswerOptions(parsed.question ?? "", parsed.question_focus)],
-              },
+              current_context: withAppendedOptions(
+                baseContext,
+                parsed.answer_options ?? getFallbackAnswerOptions(parsed.question ?? "", parsed.question_focus)
+              ),
             }
           : { status: "completed" }),
         updated_at: new Date().toISOString(),
@@ -273,7 +255,6 @@ Apakah kamu membutuhkan informasi tambahan dari caregiver, atau sudah cukup untu
       .eq("id", session.id);
 
     if (!parsed.needs_more_info && parsed.insight) {
-      // Save insight directly
       const { data: savedInsight } = await supabase
         .from("insights")
         .insert({

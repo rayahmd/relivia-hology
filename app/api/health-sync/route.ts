@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { resolveApiAuth } from "@/lib/supabase/bearer";
 import { recalcBaselines } from "@/lib/recalcBaseline";
 import { runAutomaticPipeline } from "@/lib/autoTrigger";
+import { getOwnedPatient } from "@/lib/getOrCreatePatient";
 
 const ALLOWED_TYPES = new Set(["sleep_hours", "steps", "heart_rate"]);
 const ALLOWED_SOURCES = new Set([
@@ -12,21 +13,26 @@ const ALLOWED_SOURCES = new Set([
   "demo_seed",
 ]);
 
-/**
- * POST /api/health-sync (PRD §11–§15).
- *
- * Accepts BOTH the PRD contract (camelCase):
- *   { patientId, source: "health_connect", data: [{ dataType, value, unit, recordedAt }] }
- * and the legacy web contract (snake_case):
- *   { patient_id, data: [{ data_type, value, unit, recorded_at }] }
- *
- * Pipeline per sync:
- *   store → recalc personal baseline → change detection →
- *   automatic agent trigger → { notification: { type, sessionId } | null }
- *
- * Auth: session cookie (browser/WebView) OR Authorization: Bearer token
- * (native WorkManager background sync, PRD §11).
- */
+type HealthRecord = {
+  patient_id: string;
+  data_type: string;
+  value: number;
+  unit: string;
+  recorded_at: string;
+  source: string;
+};
+
+// POST /api/health-sync.
+//
+// accepts both the prd contract (camelCase):
+//   { patientId, source, data: [{ dataType, value, unit, recordedAt }] }
+// and the legacy web contract (snake_case):
+//   { patient_id, data: [{ data_type, value, unit, recorded_at }] }
+//
+// pipeline per sync:
+//   store → recalc baseline → change detection → agent trigger.
+//
+// auth: session cookie (browser/webview) or bearer token (native worker).
 export async function POST(req: NextRequest) {
   try {
     const { supabase, user } = await resolveApiAuth(req);
@@ -36,7 +42,7 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json().catch(() => ({}));
 
-    // ── Dual-format normalization (PRD §12 + backward compat) ──
+    // dual-format normalization + backward compat
     const patientId: string | undefined = body.patientId ?? body.patient_id;
     const source: string = body.source ?? "manual";
     const rawData = body.data;
@@ -55,14 +61,7 @@ export async function POST(req: NextRequest) {
     }
 
     const today = new Date().toISOString().slice(0, 10);
-    const records: Array<{
-      patient_id: string;
-      data_type: string;
-      value: number;
-      unit: string;
-      recorded_at: string;
-      source: string;
-    }> = [];
+    const records: HealthRecord[] = [];
 
     for (const d of rawData) {
       const dataType: string | undefined = d.dataType ?? d.data_type;
@@ -85,13 +84,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // ── Verify ownership (PRD §35) ──
-    const { data: patient } = await supabase
-      .from("patients")
-      .select("id, name")
-      .eq("id", patientId)
-      .eq("caregiver_id", user.id)
-      .single();
+    const patient = await getOwnedPatient(supabase, patientId, user.id);
     if (!patient) return NextResponse.json({ error: "Patient not found" }, { status: 404 });
 
     const { error } = await supabase
@@ -99,7 +92,7 @@ export async function POST(req: NextRequest) {
       .upsert(records, { onConflict: "patient_id,data_type,recorded_at" });
     if (error) throw error;
 
-    // ── Personal baseline refresh + automatic pipeline (PRD §13–§17) ──
+    // baseline refresh + automatic pipeline
     let baselineMap: Record<string, number> = {};
     try {
       baselineMap = await recalcBaselines(supabase, patientId);
@@ -112,8 +105,7 @@ export async function POST(req: NextRequest) {
       pipeline = await runAutomaticPipeline(supabase, patient, baselineMap);
     } catch (e) {
       console.error("[health-sync] auto pipeline failed", e);
-      // Storage already succeeded — report sync ok with pipeline error
-      // (PRD §31: health sync must not crash the app).
+      // storage already succeeded — report sync ok with pipeline error.
       return NextResponse.json({
         ok: true,
         synced: records.length,
@@ -137,11 +129,8 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/**
- * Demo scenario seed: PUT with preset data for Day 8 of the PRD demo.
- * Used by the "Simulasi Data Hari Ini" button. Accepts both
- * { patient_id } (legacy) and { patientId } (PRD).
- */
+// demo seed: PUT with preset data for the demo day scenario. used by the
+// simulation button. accepts both { patient_id } and { patientId }.
 export async function PUT(req: NextRequest) {
   try {
     const { supabase, user } = await resolveApiAuth(req);
@@ -156,26 +145,14 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: "patientId required" }, { status: 400 });
     }
 
-    const { data: patient } = await supabase
-      .from("patients")
-      .select("id")
-      .eq("id", patientId)
-      .eq("caregiver_id", user.id)
-      .single();
+    const patient = await getOwnedPatient(supabase, patientId, user.id);
     if (!patient) return NextResponse.json({ error: "Patient not found" }, { status: 404 });
 
     const today = new Date();
-    const records: Array<{
-      patient_id: string;
-      data_type: string;
-      value: number;
-      unit: string;
-      recorded_at: string;
-      source: string;
-    }> = [];
+    const records: HealthRecord[] = [];
 
     if (scenario === "baseline_week") {
-      // Seed 7 days of "normal" data (Day 1–7)
+      // seed 7 days of normal data
       for (let d = 7; d >= 1; d--) {
         const date = new Date(today);
         date.setDate(date.getDate() - d);
@@ -187,7 +164,7 @@ export async function PUT(req: NextRequest) {
         );
       }
     } else if (scenario === "change_day") {
-      // Seed today with "significant change" data (Day 8)
+      // seed today with significant-change data
       const todayStr = today.toISOString().slice(0, 10);
       records.push(
         { patient_id: patientId, data_type: "sleep_hours", value: 5.1, unit: "hours", recorded_at: todayStr, source: "demo_seed" },
@@ -203,43 +180,35 @@ export async function PUT(req: NextRequest) {
       if (error) throw error;
     }
 
-    // Demo Day-8: seeding the change day immediately runs the same automatic
-    // pipeline as a background sync (detect → agent → notification), so the
-    // PRD demo works with one tap and no "Mulai Investigasi" button.
+    // seeding the change day runs the same automatic pipeline as a
+    // background sync, so the demo works with one tap.
     if (scenario === "change_day") {
-      const { data: fullPatient } = await supabase
-        .from("patients")
-        .select("id, name")
-        .eq("id", patientId)
-        .single();
-      if (fullPatient) {
-        const baselineMap = await recalcBaselines(supabase, patientId).catch(() => ({}));
-        const pipeline = await runAutomaticPipeline(supabase, fullPatient, baselineMap).catch(
-          () => null
-        );
-        // Saat sesi sudah aktif (dedup), frontend perlu status sesi agar bisa
-        // menampilkan ulang banner yang tepat (agent_question vs insight_ready).
-        let sessionStatus: string | null = null;
-        if (pipeline?.sessionId) {
-          const { data: s } = await supabase
-            .from("agent_sessions")
-            .select("status")
-            .eq("id", pipeline.sessionId)
-            .maybeSingle();
-          sessionStatus = (s as { status?: string } | null)?.status ?? null;
-        }
-        return NextResponse.json({
-          ok: true,
-          seeded: records.length,
-          scenario,
-          detected: pipeline?.detected ?? false,
-          agentSessionId: pipeline?.sessionId ?? null,
-          notification: pipeline?.notification ?? null,
-          ...(pipeline?.skippedReason ? { skipped: pipeline.skippedReason } : {}),
-          ...(sessionStatus ? { sessionStatus } : {}),
-          ...(pipeline?.agentError ? { agentError: pipeline.agentError } : {}),
-        });
+      const baselineMap = await recalcBaselines(supabase, patientId).catch(() => ({}));
+      const pipeline = await runAutomaticPipeline(supabase, patient, baselineMap).catch(
+        () => null
+      );
+      // dedup (session still active): frontend needs the session status to
+      // re-show the right banner (agent_question vs insight_ready).
+      let sessionStatus: string | null = null;
+      if (pipeline?.sessionId) {
+        const { data: s } = await supabase
+          .from("agent_sessions")
+          .select("status")
+          .eq("id", pipeline.sessionId)
+          .maybeSingle();
+        sessionStatus = (s as { status?: string } | null)?.status ?? null;
       }
+      return NextResponse.json({
+        ok: true,
+        seeded: records.length,
+        scenario,
+        detected: pipeline?.detected ?? false,
+        agentSessionId: pipeline?.sessionId ?? null,
+        notification: pipeline?.notification ?? null,
+        ...(pipeline?.skippedReason ? { skipped: pipeline.skippedReason } : {}),
+        ...(sessionStatus ? { sessionStatus } : {}),
+        ...(pipeline?.agentError ? { agentError: pipeline.agentError } : {}),
+      });
     }
 
     return NextResponse.json({ ok: true, seeded: records.length, scenario });

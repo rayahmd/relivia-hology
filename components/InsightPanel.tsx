@@ -49,7 +49,7 @@ export default function InsightPanel({
             <span className="text-white/60 text-xs">{new Date(latestNew.created_at).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}</span>
           </div>
           <div className="p-6 space-y-5">
-            {/* Detected Changes */}
+            {/* detected changes */}
             {latestNew.detected_changes?.length > 0 && (
               <section>
                 <div className="text-[11px] font-bold uppercase tracking-wide text-primary mb-2">Perubahan Terdeteksi</div>
@@ -67,7 +67,7 @@ export default function InsightPanel({
               </section>
             )}
 
-            {/* Interpretation */}
+            {/* interpretation */}
             {latestNew.interpretation && (
               <section>
                 <div className="text-[11px] font-bold uppercase tracking-wide text-primary mb-2">Interpretasi</div>
@@ -75,7 +75,7 @@ export default function InsightPanel({
               </section>
             )}
 
-            {/* Related Factors */}
+            {/* related factors */}
             {latestNew.related_factors?.length > 0 && (
               <section>
                 <div className="text-[11px] font-bold uppercase tracking-wide text-primary mb-2">Faktor Terkait</div>
@@ -87,7 +87,7 @@ export default function InsightPanel({
               </section>
             )}
 
-            {/* Monitoring */}
+            {/* monitoring */}
             {latestNew.monitoring_points?.length > 0 && (
               <section>
                 <div className="text-[11px] font-bold uppercase tracking-wide text-primary mb-2">Yang Perlu Dipantau</div>
@@ -99,7 +99,7 @@ export default function InsightPanel({
               </section>
             )}
 
-            {/* Caregiver context */}
+            {/* caregiver context */}
             {latestNew.context_notes && (
               <section>
                 <div className="text-[11px] font-bold uppercase tracking-wide text-primary mb-2">Konteks dari Caregiver</div>
@@ -107,7 +107,7 @@ export default function InsightPanel({
               </section>
             )}
 
-            {/* Disclaimer */}
+            {/* disclaimer */}
             <div className="bg-bg rounded-xl px-4 py-3.5 text-xs text-faint leading-relaxed">
               Ini bukan diagnosis dan bukan keputusan klinis. Diskusikan informasi ini dengan tenaga kesehatan yang menangani pasien.
             </div>

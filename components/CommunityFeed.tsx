@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { markHelpful } from "@/app/community/actions";
 import type { CommunityPost } from "@/lib/types";
 

@@ -1,7 +1,6 @@
 /**
- * Baseline calculation logic — patient-specific.
- * Uses the last N days of historical data to compute
- * average, min, and max for each numeric metric.
+ * patient-specific baseline calculation from the last N days of data:
+ * average, min, and max per numeric metric.
  */
 
 export type MetricSamples = {
@@ -18,8 +17,7 @@ export type CalculatedBaseline = {
 };
 
 /**
- * Compute baseline from a list of numeric values.
- * Returns null if there are fewer than minSamples values.
+ * baseline from numeric values. null when fewer than minSamples.
  */
 export function computeBaseline(
   metric: string,
@@ -43,8 +41,7 @@ export function computeBaseline(
 }
 
 /**
- * Build baselines from daily check-in history.
- * Maps checkin fields to normalized metric names.
+ * baselines from check-in history. maps checkin fields to metric names.
  */
 export function buildCheckinsBaselines(
   checkins: Array<{
@@ -67,8 +64,7 @@ export function buildCheckinsBaselines(
 }
 
 /**
- * Build baselines from health data history.
- * Groups by data_type and computes per-type baseline.
+ * baselines from health data history, grouped by data_type.
  */
 export function buildHealthBaselines(
   healthData: Array<{ data_type: string; value: number }>

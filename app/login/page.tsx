@@ -6,9 +6,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import Logo from "@/components/Logo";
 
-// Login creates a Supabase browser client during render, which throws when
-// build-time env is absent (e.g. Vercel without env vars configured).
-// force-dynamic skips prerender so `next build` never hard-crashes on this.
+// browser client during render throws when build-time env is absent, so
+// force-dynamic skips prerender and `next build` never hard-crashes.
 export const dynamic = "force-dynamic";
 
 export default function LoginPage() {
@@ -23,10 +22,10 @@ export default function LoginPage() {
   const [checkEmail, setCheckEmail] = useState(false);
   const [resending, setResending] = useState(false);
   const [resent, setResent] = useState(false);
-  // Gerbang client-side: jangan paint form sebelum getSession memastikan
-  // tidak ada sesi (mencegah flash form ±1 detik saat SPA navigation ke
-  // /login oleh user yang sudah login — middleware sudah menangani
-  // full-page load, ini menutup celah navigasi client-side).
+  // client-side gate: never paint the form before getSession confirms
+  // there is no session (avoids a ~1s form flash on spa navigation to
+  // /login by a logged-in user — middleware covers full-page loads, this
+  // covers client-side navigation).
   const [authChecked, setAuthChecked] = useState(false);
   const [hasSession, setHasSession] = useState(false);
 
@@ -50,11 +49,10 @@ export default function LoginPage() {
   async function handleGoogleSignIn() {
     setGoogleLoading(true);
     setError(null);
-    // Inside the APK: OAuth must NOT redirect the WebView (Android would
-    // hand supabase.co/google.com to Chrome and the callback would land
-    // there, never returning a session to the app). Instead open the
-    // Supabase OAuth URL in a Custom Tab and come back via the
-    // relivia://auth/callback deep link — see lib/nativeAuth.ts.
+    // inside the apk: oauth must not redirect the webview (android would
+    // hand the url to chrome and the callback would never return a session
+    // to the app). instead open the oauth url in a custom tab and come back
+    // via the relivia://auth/callback deep link — see lib/nativeAuth.ts.
     try {
       const { isNativeSync, markNativeFlag, startNativeGoogleSignIn } = await import("@/lib/nativeAuth");
       if (isNativeSync()) {
@@ -68,9 +66,9 @@ export default function LoginPage() {
         // appUrlOpen listener installed below. Keep the spinner on.
         return;
       }
-    } catch {
-      // Native helper failed to load — fall through to the web flow.
-    }
+      } catch {
+        // native helper failed to load — fall through to the web flow.
+      }
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: `${window.location.origin}/auth/callback` },
@@ -82,9 +80,8 @@ export default function LoginPage() {
     // on success, Supabase redirects the browser to Google — no further code runs here
   }
 
-  // Auto-redirect to /dashboard if user is already authenticated.
-  // Redirect only fires on a CONFIRMED session (getSession / listener),
-  // never on "auth not yet checked" — "unknown" is not treated as logged
+  // auto-redirect to /dashboard on a confirmed session (getSession /
+  // listener). never on "auth not yet checked" — unknown is not logged
   // out, so there is no flash of a wrong route.
   useEffect(() => {
     let redirected = false;
@@ -94,7 +91,6 @@ export default function LoginPage() {
       if (session) {
         redirected = true;
         setHasSession(true);
-        console.log("[ReliviaAuth] Authenticated session detected on /login -> redirecting to /dashboard");
         router.replace("/dashboard");
       }
     };
@@ -105,7 +101,6 @@ export default function LoginPage() {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log(`[ReliviaAuth] /login auth event: ${event}`);
       if (session?.user) {
         checkAndRedirect(session);
       } else if (event === "INITIAL_SESSION") {
@@ -117,8 +112,8 @@ export default function LoginPage() {
     if (params.get("provider") === "google") {
       handleGoogleSignIn();
     }
-    // Tampilkan alasan asli dari Supabase/Google bila ada (mis. redirect URL
-    // belum allow-list, consent dibatalkan), bukan cuma pesan generik.
+    // surface the real provider error (e.g. redirect url not allow-listed,
+    // consent cancelled), not just a generic message.
     const oauthDesc = params.get("error_description");
     if (params.get("error") === "auth_failed" || params.get("error") === "oauth") {
       setError(
@@ -128,10 +123,10 @@ export default function LoginPage() {
       );
     }
 
-    // APK only: listen for the OAuth deep-link callback
-    // (relivia://auth/callback?code=...) emitted by the Capacitor App
-    // plugin after the Custom Tab finishes. Exchanges the code for a
-    // session in this WebView and navigates to /dashboard.
+    // apk only: listen for the oauth deep-link callback
+    // (relivia://auth/callback?code=...) emitted by the capacitor app
+    // plugin after the custom tab finishes. exchanges the code for a
+    // session in this webview and navigates to /dashboard.
     let cleanupNativeAuth: (() => void) | undefined;
     (async () => {
       try {
@@ -148,7 +143,7 @@ export default function LoginPage() {
             setGoogleLoading(false);
           },
           onCancel: () => {
-            // Custom Tab closed without a session (user pressed back) —
+            // custom tab closed without a session (back pressed) —
             // stop the spinner so they can retry.
             supabase.auth
               .getSession()
@@ -192,17 +187,17 @@ export default function LoginPage() {
         return;
       }
 
-      // Session langsung ada kalau "Confirm email" nonaktif — masuk sekarang.
-      // loading SENGAJA tetap true sampai /dashboard tampil: kalau
-      // dimatikan di sini user menatap form statis selama fetch dashboard
-      // (±2s) dan mengira login macet.
+      // session exists right away when "confirm email" is off — enter now.
+      // loading intentionally stays true until /dashboard paints: turning
+      // it off here leaves a static form during the dashboard fetch and
+      // looks like a stuck login.
       if (data.session) {
         sessionStorage.setItem("registered", "1");
         router.replace("/dashboard");
         return;
       }
 
-      // Fallback: coba login langsung agar tidak perlu menunggu konfirmasi email.
+      // fallback: try direct login so no email confirmation wait is needed.
       const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
       if (!signInError) {
         sessionStorage.setItem("registered", "1");
@@ -223,16 +218,14 @@ export default function LoginPage() {
       return;
     }
 
-    // replace (bukan push): user tidak bisa Back ke /login setelah masuk.
-    // Tanpa router.refresh(): navigasi App Router sudah mem-fetch RSC
-    // /dashboard dengan cookie sesi terbaru; refresh() ganda justru
-    // me-revalidate /login yang lama dan memperlambat transisi.
+    // replace (not push): no back-navigation to /login after entering.
+    // no router.refresh(): app-router navigation already fetches the fresh
+    // /dashboard rsc with the newest session cookie.
     router.replace("/dashboard");
   }
 
-  // Sesi ada (dialihkan) atau belum dicek: jangan paint form login sama
-  // sekali — hanya placeholder kosong. Form hanya muncul setelah
-  // dipastikan tidak ada sesi.
+  // session exists (redirecting) or not yet checked: paint no form at
+  // all, just a placeholder. the form only appears once confirmed absent.
   if (hasSession || !authChecked) {
     return <main className="min-h-screen bg-bg" />;
   }

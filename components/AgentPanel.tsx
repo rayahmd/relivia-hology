@@ -35,14 +35,13 @@ type SessionPayload = {
   changes: ChangeResult[];
 };
 
-/** Bounded re-poll for a session stuck in `investigating` — never spin forever. */
+/** bounded re-poll for a session stuck in investigating. */
 const INVESTIGATING_POLLS = 6;
 const INVESTIGATING_POLL_MS = 5000;
 
 /**
- * Last-resort static options, used only when the server returns no
- * contextual answer_options (e.g. legacy responses). Normal path always
- * renders per-question options from the agent.
+ * last-resort static options for when the server sends none (legacy
+ * responses). the normal path renders per-question options from the agent.
  */
 const QUICK_REPLIES_FALLBACK = [
   "Ya, lebih sering dari biasanya",
@@ -50,14 +49,17 @@ const QUICK_REPLIES_FALLBACK = [
   "Tidak terlalu yakin",
 ];
 
+/** server options win; static fallback only when the server sends none. */
+function pickOptions(fromApi: unknown): string[] {
+  return Array.isArray(fromApi) && fromApi.length > 0
+    ? (fromApi as string[])
+    : QUICK_REPLIES_FALLBACK;
+}
+
 /**
- * AgentPanel — automatic-first (PRD §26–§27, §37).
- *
- * - Opened via notification deep link (?session=) or directly: the panel
- *   resumes the matching / latest active session automatically.
- * - NO "Mulai Investigasi" button in the automatic flow (PRD §39).
- * - The manual button only appears in idle state (no active session),
- *   kept for demo/debug of the manual path.
+ * automatic-first panel: opened via notification deep link (?session=) or
+ * directly, resumes the matching / latest session on its own. the manual
+ * button only shows in idle (no active session), kept for demo/debug.
  */
 export default function AgentPanel({
   patientId,
@@ -68,15 +70,13 @@ export default function AgentPanel({
   patientName: string;
   initialSessionId?: string | null;
 }) {
-  // Start in a loading state, never in `idle`: the auto-resume below resolves
-  // the real state asynchronously, and rendering the idle empty card first
-  // is what flashed "Belum Ada Investigasi Aktif" on every mount/refresh.
+  // start loading, never idle: auto-resume resolves async, and painting
+  // the idle empty card first is what flashed "belum ada investigasi aktif".
   const [status, setStatus] = useState<AgentStatus>("loading_session");
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId ?? null);
   const [question, setQuestion] = useState<string | null>(null);
-  // Contextual answer options from the server (per-question). The static
-  // QUICK_REPLIES below is only a last-resort fallback when the server
-  // sends none — free-text input is always available regardless.
+  // per-question options from the server; static fallback only when the
+  // server sends none. free-text input is always available regardless.
   const [options, setOptions] = useState<string[]>([]);
   const [answer, setAnswer] = useState("");
   const [changes, setChanges] = useState<ChangeResult[]>([]);
@@ -90,7 +90,7 @@ export default function AgentPanel({
   const answeringRef = useRef(false);
   const briefRef = useRef<HTMLDivElement | null>(null);
 
-  // Poll timers must never outlive the panel.
+  // poll timers must never outlive the panel.
   useEffect(() => () => {
     if (pollTimer.current) window.clearTimeout(pollTimer.current);
   }, []);
@@ -112,16 +112,16 @@ export default function AgentPanel({
 
       if (s.status === "waiting_for_caregiver" && s.last_question) {
         setQuestion(s.last_question);
-        setOptions(s.last_options && s.last_options.length > 0 ? s.last_options : QUICK_REPLIES_FALLBACK);
+        setOptions(pickOptions(s.last_options));
         setStatus("waiting_for_caregiver");
       } else if (s.status === "completed" && json.insight) {
         setInsight(json.insight);
         setStatus("completed");
       } else if (s.status === "completed") {
-        // Cancelled/abandoned: completed without an insight.
+        // cancelled/abandoned: completed without an insight.
         setStatus("cancelled");
       } else {
-        // Still investigating — re-poll a bounded number of times, then
+        // still investigating — re-poll a bounded number of times, then
         // surface recovery actions instead of spinning forever.
         if (pollCount.current < INVESTIGATING_POLLS) {
           pollCount.current += 1;
@@ -140,11 +140,10 @@ export default function AgentPanel({
     }
   }, []);
 
-  // Auto-resume: deep-link session first, else latest pending notification (PRD §26).
-  // Explicitly (re-)enter loading first: without this, a remount or a slow
-  // dispatch fetch would briefly render the idle empty card ("Belum Ada
-  // Investigasi Aktif") before the real state resolves. Idle is now only
-  // reached when we positively know there is nothing to show.
+  // auto-resume: deep-link session first, else latest pending notification.
+  // (re-)enter loading first: without this, a remount or slow dispatch
+  // fetch briefly paints the idle empty card. idle is only reached when
+  // we positively know there is nothing to show.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -208,7 +207,7 @@ export default function AgentPanel({
       if (json.status === "waiting_for_caregiver") {
         setSessionId(json.session_id);
         setQuestion(json.question);
-        setOptions(json.answer_options && json.answer_options.length > 0 ? json.answer_options : QUICK_REPLIES_FALLBACK);
+        setOptions(pickOptions(json.answer_options));
         setQuestionsCount(1);
         setStatus("waiting_for_caregiver");
         return;
@@ -221,8 +220,8 @@ export default function AgentPanel({
       }
 
       if (json.status === "investigating" && json.session_id) {
-        // Fresh session still working (e.g. auto-pipeline race) — resume
-        // it through the bounded poll instead of hanging the spinner.
+        // fresh session still working (auto-pipeline race) — resume it
+        // through the bounded poll instead of hanging the spinner.
         await loadSession(json.session_id, true);
       }
     } catch (e) {
@@ -270,7 +269,7 @@ export default function AgentPanel({
 
       if (json.status === "waiting_for_caregiver") {
         setQuestion(json.question);
-        setOptions(json.answer_options && json.answer_options.length > 0 ? json.answer_options : QUICK_REPLIES_FALLBACK);
+        setOptions(pickOptions(json.answer_options));
         setQuestionsCount((c) => c + 1);
         setStatus("waiting_for_caregiver");
         return;
@@ -291,7 +290,7 @@ export default function AgentPanel({
   async function generateBrief() {
     setGeneratingBrief(true);
     setErrorMsg(null);
-    // Client-side ceiling: the server times out at 60s; never spin forever.
+    // client ceiling: server times out at 60s; never spin forever.
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 90_000);
     try {
@@ -306,7 +305,7 @@ export default function AgentPanel({
       const content: string | null = json.brief?.full_content ?? null;
       if (!content || !content.trim()) throw new Error("Brief kosong — coba lagi.");
       setBrief(content);
-      // Bawa user langsung ke hasilnya agar "selesai" terlihat jelas.
+      // scroll the result into view so completion is visible.
       requestAnimationFrame(() => {
         briefRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
@@ -324,7 +323,7 @@ export default function AgentPanel({
 
   return (
     <div className="max-w-[720px] mx-auto">
-      {/* ── Header ─────────────────────────────────── */}
+      {/* ── header ─────────────────────────────────── */}
       <div className="rounded-3xl p-6 md:p-8 mb-6 bg-gradient-to-br from-[#2D1B69] to-[#4338CA] text-white">
         <div className="flex items-center gap-3 mb-3">
           <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
@@ -343,7 +342,7 @@ export default function AgentPanel({
         </p>
       </div>
 
-      {/* ── Status: Idle (no active session) ───────── */}
+      {/* ── idle (no active session) ───────── */}
       {status === "idle" && (
         <div className="card p-8 text-center">
           <div className="w-16 h-16 rounded-full bg-primary-light flex items-center justify-center mx-auto mb-5">
@@ -362,7 +361,7 @@ export default function AgentPanel({
         </div>
       )}
 
-      {/* ── Status: Loading session / Investigating ── */}
+      {/* ── loading session / investigating ── */}
       {(status === "loading_session" || status === "investigating") && (
         <div className="card p-10 text-center">
           <div className="w-16 h-16 rounded-full bg-primary-light flex items-center justify-center mx-auto mb-5">
@@ -388,7 +387,7 @@ export default function AgentPanel({
         </div>
       )}
 
-      {/* ── Status: No Change ──────────────────────── */}
+      {/* ── no change ──────────────────────── */}
       {status === "no_change" && (
         <div className="card p-8 text-center">
           <div className="w-16 h-16 rounded-full bg-green-tint flex items-center justify-center mx-auto mb-5">
@@ -414,7 +413,7 @@ export default function AgentPanel({
         </div>
       )}
 
-      {/* ── Detected Changes ───────────────────────── */}
+      {/* ── detected changes ───────────────────────── */}
       {(status === "waiting_for_caregiver" || status === "completed" || status === "reanalyzing") && changes.length > 0 && (
         <div className="card p-5 mb-4">
           <div className="text-xs font-bold text-primary uppercase tracking-wide mb-3">Perubahan Terdeteksi</div>
@@ -436,7 +435,7 @@ export default function AgentPanel({
         </div>
       )}
 
-      {/* ── Status: Waiting For Caregiver (PRD §26) ─ */}
+      {/* ── waiting for caregiver ─ */}
       {status === "waiting_for_caregiver" && question && (
         <div className="card p-6">
           <div className="flex items-center gap-2 mb-4">
@@ -481,7 +480,7 @@ export default function AgentPanel({
         </div>
       )}
 
-      {/* ── Status: Re-analyzing ───────────────────── */}
+      {/* ── re-analyzing ───────────────────── */}
       {status === "reanalyzing" && (
         <div className="card p-10 text-center">
           <div className="w-16 h-16 rounded-full bg-amber-tint flex items-center justify-center mx-auto mb-5">
@@ -492,7 +491,7 @@ export default function AgentPanel({
         </div>
       )}
 
-      {/* ── Status: Completed — Clinical Insight ───── */}
+      {/* ── completed — clinical insight ───── */}
       {status === "completed" && insight && (
         <div className="space-y-4">
           <div className="card p-6">
@@ -505,7 +504,7 @@ export default function AgentPanel({
               <span className="font-extrabold text-green-deep">Clinical Insight Siap</span>
             </div>
 
-            {/* Detected Changes */}
+            {/* detected changes */}
             {insight.detected_changes && insight.detected_changes.length > 0 && (
               <section className="mb-5">
                 <div className="text-[11px] font-bold uppercase tracking-wide text-primary mb-2">Perubahan Terdeteksi</div>
@@ -522,7 +521,7 @@ export default function AgentPanel({
               </section>
             )}
 
-            {/* Interpretation */}
+            {/* interpretation */}
             {insight.interpretation && (
               <section className="mb-5">
                 <div className="text-[11px] font-bold uppercase tracking-wide text-primary mb-2">Interpretasi</div>
@@ -530,7 +529,7 @@ export default function AgentPanel({
               </section>
             )}
 
-            {/* Related Factors */}
+            {/* related factors */}
             {insight.related_factors && insight.related_factors.length > 0 && (
               <section className="mb-5">
                 <div className="text-[11px] font-bold uppercase tracking-wide text-primary mb-2">Faktor Terkait</div>
@@ -542,7 +541,7 @@ export default function AgentPanel({
               </section>
             )}
 
-            {/* Monitoring Points */}
+            {/* monitoring points */}
             {insight.monitoring_points && insight.monitoring_points.length > 0 && (
               <section className="mb-5">
                 <div className="text-[11px] font-bold uppercase tracking-wide text-primary mb-2">Yang Perlu Dipantau</div>
@@ -554,7 +553,7 @@ export default function AgentPanel({
               </section>
             )}
 
-            {/* Context from caregiver */}
+            {/* context from caregiver */}
             {insight.context_notes && (
               <section className="mb-5">
                 <div className="text-[11px] font-bold uppercase tracking-wide text-primary mb-2">Konteks dari Caregiver</div>
@@ -562,13 +561,13 @@ export default function AgentPanel({
               </section>
             )}
 
-            {/* Disclaimer */}
+            {/* disclaimer */}
             <div className="bg-bg rounded-xl px-4 py-3.5 text-xs text-faint leading-relaxed">
               ⚠️ Informasi ini bukan diagnosis dan bukan keputusan klinis. Ini adalah ringkasan observasi yang perlu didiskusikan dengan tenaga kesehatan yang menangani pasien.
             </div>
           </div>
 
-          {/* Generate Consultation Brief */}
+          {/* generate consultation brief */}
           {!brief && (
             <button
               onClick={generateBrief}
@@ -579,7 +578,7 @@ export default function AgentPanel({
             </button>
           )}
 
-          {/* Consultation Brief */}
+          {/* consultation brief */}
           {brief && (
             <div ref={briefRef} className="card p-6 scroll-mt-4">
               <div className="text-[11px] font-bold uppercase tracking-wide text-primary mb-4">Consultation Brief</div>
@@ -596,7 +595,7 @@ export default function AgentPanel({
         </div>
       )}
 
-      {/* ── Status: Cancelled ──────────────────────── */}
+      {/* ── cancelled ──────────────────────── */}
       {status === "cancelled" && (
         <div className="card p-8 text-center">
           <h3 className="font-extrabold text-xl mb-2">Sesi Dibatalkan</h3>
@@ -610,7 +609,7 @@ export default function AgentPanel({
         </div>
       )}
 
-      {/* ── Error (PRD §31) ────────────────────────── */}
+      {/* ── error ────────────────────────── */}
       {status === "error" && errorMsg && (
         <div className="card p-6">
           <div className="text-sm text-red-deep bg-red-tint rounded-xl px-4 py-3 mb-4">

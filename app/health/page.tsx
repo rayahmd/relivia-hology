@@ -1,12 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { getOrCreatePatient } from "@/lib/getOrCreatePatient";
+import { buildHealthOverview } from "@/lib/metrics";
 import TopNav from "@/components/TopNav";
 import HealthDataCard from "@/components/HealthDataCard";
 import MonitoringCard from "@/components/MonitoringCard";
 
 export const dynamic = "force-dynamic";
-
-const METRICS = ["sleep_hours", "steps", "heart_rate"];
 
 export default async function HealthPage() {
   const supabase = createClient();
@@ -17,7 +16,7 @@ export default async function HealthPage() {
   thirtyDaysAgoDate.setDate(thirtyDaysAgoDate.getDate() - 30);
   const thirtyDaysAgo = thirtyDaysAgoDate.toISOString().slice(0, 10);
 
-  // Tiga query independen dijalankan paralel, bukan 3x serial.
+  // three independent queries in parallel, not 3x serial.
   const [{ data: todayData }, { data: baselines }, { data: historyData }] = await Promise.all([
     supabase
       .from("health_data")
@@ -36,33 +35,7 @@ export default async function HealthPage() {
       .order("recorded_at", { ascending: false }),
   ]);
 
-  const baselineMap: Record<string, { value: number }> = {};
-  for (const b of baselines ?? []) {
-    baselineMap[b.metric] = { value: b.baseline_value };
-  }
-
-  const todayMap: Record<string, { value: number; unit: string }> = {};
-  for (const d of todayData ?? []) {
-    todayMap[d.data_type] = { value: d.value, unit: d.unit };
-  }
-
-  const metrics = METRICS.map((metric) => {
-    const today_val = todayMap[metric];
-    const baseline = baselineMap[metric];
-    let change_percent: number | null = null;
-    if (today_val && baseline) {
-      change_percent =
-        Math.round(((today_val.value - baseline.value) / baseline.value) * 1000) / 10;
-    }
-    return {
-      metric,
-      today_value: today_val?.value ?? null,
-      today_unit: today_val?.unit ?? null,
-      baseline_value: baseline?.value ?? null,
-      change_percent,
-      has_data: !!today_val,
-    };
-  });
+  const metrics = buildHealthOverview(todayData ?? [], baselines ?? []);
 
   const hasData = (historyData ?? []).length > 0;
 

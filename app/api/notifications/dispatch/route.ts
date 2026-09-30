@@ -5,19 +5,10 @@ import { agentNotificationCopy, agentDeepLink } from "@/lib/notify";
 
 export const dynamic = "force-dynamic";
 
-/**
- * GET /api/notifications/dispatch (PRD §23 — notification trigger rules).
- *
- * Polled by AutoMonitorProvider (web) and used by the native layer after
- * foreground syncs. Returns pending notifications for sessions that need
- * the caregiver or recently completed with a new insight:
- *
- *   - waiting_for_caregiver → { type: "agent_question", sessionId }
- *   - completed (≤24h, insight exists) → { type: "insight_ready", sessionId }
- *
- * Deduplication: at most one notification per active session (PRD §24).
- * The client additionally tracks delivered session IDs locally.
- */
+// polled by the auto monitor + native layer. returns pending triggers:
+//   waiting_for_caregiver → agent_question
+//   completed (≤24h, has insight) → insight_ready
+// dedup: at most one notification per active session.
 export async function GET(req: NextRequest) {
   try {
     const supabase = createClient();
@@ -62,7 +53,7 @@ export async function GET(req: NextRequest) {
           updated_at: s.updated_at,
         });
       } else if (s.status === "completed") {
-        // Only notify for freshly completed sessions (≤24h) that produced an insight.
+        // only freshly completed sessions (≤24h) that produced an insight.
         const ageMs = Date.now() - new Date(s.updated_at).getTime();
         if (ageMs > 24 * 3600 * 1000) continue;
         const { data: insight } = await supabase

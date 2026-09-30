@@ -23,19 +23,16 @@ export type PendingNotification = {
 };
 
 type MonitorContext = {
-  /** Latest undismissed notification (trigger only, PRD §21). */
+  /** latest undismissed notification (trigger only). */
   pending: PendingNotification | null;
   dismiss: () => void;
   /**
-   * Tampilkan banner notifikasi SEGERA (tanpa menunggu poll 60 detik).
-   * Dipakai mis. tombol "Simulasi Hari Perubahan" yang sudah tahu
-   * sessionId dari respons API. Dedup key sama seperti poll sehingga
-   * poll berikutnya tidak menampilkannya dua kali.
-   * `force: true` = tampilkan walau key sudah pernah terlihat; hanya
-   * untuk aksi eksplisit user (mis. menekan ulang banner sesi aktif).
+   * show a banner immediately, without waiting for the 60s poll. used
+   * when the caller already knows the session id (e.g. simulation).
+   * `force` re-shows an already-seen key for explicit user actions only.
    */
   pushNotification: (n: PendingNotification, opts?: { force?: boolean }) => void;
-  /** Flush offline queue on demand; returns remaining count. */
+  /** flush offline queue on demand; returns remaining count. */
   flushQueue: () => Promise<number>;
   queueRemaining: number;
   monitoringActive: boolean;
@@ -75,18 +72,13 @@ function saveSeen(seen: Set<string>) {
 }
 
 /**
- * AutoMonitorProvider (PRD §23–§25).
+ * polls dispatch for agent sessions needing the caregiver.
  *
- * - Polls /api/notifications/dispatch for agent sessions needing the caregiver.
- * - Native Android: fires a REAL OS notification via Capacitor
- *   LocalNotifications; the in-app banner is suppressed unless the OS
- *   notification could not be posted (permission denied) — last-resort
- *   fallback so the trigger is never silently lost.
- * - Browser: web Notification API + in-app banner fallback (unchanged).
- * - Dedup: backend (one active session) + local seen-set + stable OS
- *   notification ids (re-polls overwrite, never stack).
- * - Handles Capacitor deep link relivia://agent?session=<id> AND
- *   LocalNotifications taps → /agent?session=<id> (resume existing session).
+ * - native android: real os notification; in-app banner only as fallback
+ *   when the os notification can't post (permission denied).
+ * - browser: web notification api + in-app banner fallback.
+ * - dedup: backend (one active session) + local seen-set + stable os ids.
+ * - notification taps deep-link to /agent?session=<id> (resume, never new).
  */
 export default function AutoMonitorProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -100,9 +92,8 @@ export default function AutoMonitorProvider({ children }: { children: ReactNode 
   const pushNotification = useCallback((n: PendingNotification, opts?: { force?: boolean }) => {
     if (seenRef.current === null) seenRef.current = loadSeen();
     const key = `${n.type}:${n.sessionId}`;
-    // Sudah pernah ditampilkan (mis. dari simulasi sebelumnya) → jangan
-    // spam banner yang sama berulang-ulang. force melewati cek ini untuk
-    // aksi eksplisit user yang memang meminta notifnya ditampilkan lagi.
+    // already shown → don't spam the same banner. force skips this for
+    // explicit user actions that ask to see it again.
     if (!opts?.force && seenRef.current.has(key)) return;
     seenRef.current.add(key);
     saveSeen(seenRef.current);
@@ -119,7 +110,7 @@ export default function AutoMonitorProvider({ children }: { children: ReactNode 
     }
   }, []);
 
-  // Flush queue on mount + when back online (PRD §32).
+  // flush queue on mount + when back online.
   useEffect(() => {
     flushQueue();
     const onOnline = () => flushQueue();
@@ -127,7 +118,7 @@ export default function AutoMonitorProvider({ children }: { children: ReactNode 
     return () => window.removeEventListener("online", onOnline);
   }, [flushQueue]);
 
-  // Poll dispatch for pending notifications (PRD §23).
+  // poll dispatch for pending notifications.
   useEffect(() => {
     if (seenRef.current === null) seenRef.current = loadSeen();
     let stopped = false;
@@ -142,8 +133,8 @@ export default function AutoMonitorProvider({ children }: { children: ReactNode 
         if (fresh && !stopped) {
           seenRef.current!.add(`${fresh.type}:${fresh.sessionId}`);
           saveSeen(seenRef.current!);
-          // Fire the OS-level notification (native LN or web fallback).
-          // Returns false when nothing was posted (e.g. native permission
+          // fire the os-level notification (native or web fallback).
+          // returns false when nothing was posted (e.g. native permission
           // denied) — only then show the in-app banner as last resort.
           const posted = await notifyAgent({
             type: fresh.type,
@@ -167,8 +158,8 @@ export default function AutoMonitorProvider({ children }: { children: ReactNode 
     };
   }, []);
 
-  // Capacitor deep link: relivia://agent?session=<id> (PRD §25).
-  // Used by worker-posted notifications (native PendingIntent path).
+  // capacitor deep link: relivia://agent?session=<id>, posted by worker
+  // notifications through the native pending-intent path.
   useEffect(() => {
     let remove: (() => void) | undefined;
     (async () => {
@@ -198,9 +189,9 @@ export default function AutoMonitorProvider({ children }: { children: ReactNode 
     return () => remove?.();
   }, [router, dismiss]);
 
-  // LocalNotifications tap (native): extra { type, sessionId } →
-  // resume the EXISTING agent session, never start a new investigation.
-  // Also ensures the OS channel exists while the app runs.
+  // localnotifications tap (native): extra { type, sessionId } →
+  // resume the existing session, never start a new one. also ensures
+  // the os channel exists while the app runs.
   useEffect(() => {
     let remove: (() => void) | undefined;
     (async () => {
@@ -231,7 +222,7 @@ export default function AutoMonitorProvider({ children }: { children: ReactNode 
     return () => remove?.();
   }, [router, dismiss]);
 
-  // Monitoring-active flag persisted per device (permission onboarding state).
+  // monitoring-active flag persisted per device.
   useEffect(() => {
     try {
       setMonitoringActive(localStorage.getItem("relivia_monitoring_active") === "1");

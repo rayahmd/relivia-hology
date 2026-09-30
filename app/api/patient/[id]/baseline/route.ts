@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { recalcBaselines } from "@/lib/recalcBaseline";
+import { getOwnedPatient } from "@/lib/getOrCreatePatient";
 
-/**
- * GET /api/patient/[id]/baseline — manual baseline recomputation.
- * Shares one code path with the automatic /api/health-sync pipeline
- * (lib/recalcBaseline.ts). Response shape unchanged.
- */
+// manual baseline recompute. shares one code path with the automatic
+// health-sync pipeline. response shape unchanged.
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -18,12 +16,7 @@ export async function GET(
 
     const patientId = params.id;
 
-    const { data: patient } = await supabase
-      .from("patients")
-      .select("*")
-      .eq("id", patientId)
-      .eq("caregiver_id", user.id)
-      .single();
+    const patient = await getOwnedPatient(supabase, patientId, user.id);
     if (!patient) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     await recalcBaselines(supabase, patientId);

@@ -56,7 +56,7 @@ export default function TopNav({ patientName, patientAge }: { patientName: strin
   return (
     <div className="sticky top-0 z-20 bg-white border-b border-border/80 pt-[max(env(safe-area-inset-top),10px)] pb-2 px-4 md:px-7">
       <div className="max-w-[1180px] mx-auto flex items-center justify-between gap-3">
-        {/* Left: Avatar / Profile */}
+        {/* left: avatar / profile */}
         <Link href="/dashboard" className="flex items-center gap-2.5">
           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 text-white flex items-center justify-center font-bold text-base shadow-sm ring-2 ring-purple-100 overflow-hidden">
             {patientName ? patientName.charAt(0).toUpperCase() : "P"}
@@ -67,7 +67,7 @@ export default function TopNav({ patientName, patientAge }: { patientName: strin
           </div>
         </Link>
 
-        {/* Desktop Navbar Links */}
+        {/* desktop links */}
         <nav className="hidden lg:flex relative gap-1 bg-bg rounded-full p-1 border border-border/60">
           {items.map((item) => {
             const active = pathname === item.href;
@@ -94,7 +94,7 @@ export default function TopNav({ patientName, patientAge }: { patientName: strin
           })}
         </nav>
 
-        {/* Right: Emergency button + Hamburger */}
+        {/* right: emergency + hamburger */}
         <div className="flex items-center gap-3">
           <SosButton />
 
@@ -133,7 +133,7 @@ export default function TopNav({ patientName, patientAge }: { patientName: strin
         >
           <div className="px-4 py-4 animate-menu-in space-y-3">
 
-            {/* Profile Card */}
+            {/* profile card */}
             <div className="flex items-center gap-2.5 bg-white border border-gray-100 rounded-2xl px-3.5 py-3 shadow-sm">
               <div className="w-9 h-9 rounded-full bg-primary text-white flex items-center justify-center font-bold text-sm">
                 {patientName ? patientName.charAt(0).toUpperCase() : "P"}
@@ -146,7 +146,7 @@ export default function TopNav({ patientName, patientAge }: { patientName: strin
               </div>
             </div>
 
-            {/* Nav List */}
+            {/* nav list */}
             <nav className="flex flex-col gap-1.5 bg-bg rounded-3xl p-2.5">
               {items.map((item) => {
                 const active = pathname === item.href;
@@ -167,7 +167,7 @@ export default function TopNav({ patientName, patientAge }: { patientName: strin
               })}
             </nav>
 
-            {/* Logout Pill */}
+            {/* logout pill */}
             <button
               onClick={handleLogout}
               className="w-full flex items-center justify-center gap-2 rounded-full px-4 py-3.5 text-sm font-bold text-red-deep bg-red-tint/70 hover:bg-red-tint transition"

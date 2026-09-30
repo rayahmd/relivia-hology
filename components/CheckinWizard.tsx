@@ -100,7 +100,7 @@ export default function CheckinWizard({ patientName }: { patientName: string }) 
         ))}
       </div>
 
-      {/* Step 0 — Mood */}
+      {/* mood */}
       {step === 0 && (
         <Step eyebrow="LANGKAH 1 DARI 7" title={`Gimana suasana hati ${patientName} hari ini?`} hint="Lihat secara umum ya, nggak perlu detail banget.">
           <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 sm:gap-2.5">
@@ -114,7 +114,7 @@ export default function CheckinWizard({ patientName }: { patientName: string }) 
         </Step>
       )}
 
-      {/* Step 1 — Sleep */}
+      {/* sleep */}
       {step === 1 && (
         <Step eyebrow="LANGKAH 2 DARI 7" title="Semalam tidurnya gimana?" hint="Perkiraan aja, nggak perlu catat jam pastinya." onBack={() => setStep(0)}>
           <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 sm:gap-2.5">
@@ -128,7 +128,7 @@ export default function CheckinWizard({ patientName }: { patientName: string }) 
         </Step>
       )}
 
-      {/* Step 2 — Social */}
+      {/* social */}
       {step === 2 && (
         <Step eyebrow="LANGKAH 3 DARI 7" title="Gimana interaksi sosialnya?" hint="Ngobrol, keluar kamar, respons ke keluarga." onBack={() => setStep(1)}>
           <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 sm:gap-2.5">
@@ -142,7 +142,7 @@ export default function CheckinWizard({ patientName }: { patientName: string }) 
         </Step>
       )}
 
-      {/* Step 3 — Medication */}
+      {/* medication */}
       {step === 3 && (
         <Step eyebrow="LANGKAH 4 DARI 7" title="Obat hari ini gimana?" onBack={() => setStep(2)}>
           <div className="flex flex-col gap-3">
@@ -172,7 +172,7 @@ export default function CheckinWizard({ patientName }: { patientName: string }) 
         </Step>
       )}
 
-      {/* Step 4 — Appetite */}
+      {/* appetite */}
       {step === 4 && (
         <Step eyebrow="LANGKAH 5 DARI 7" title="Bagaimana nafsu makannya?" onBack={() => setStep(3)}>
           <div className="flex flex-col gap-3">
@@ -195,7 +195,7 @@ export default function CheckinWizard({ patientName }: { patientName: string }) 
         </Step>
       )}
 
-      {/* Step 5 — Self-care */}
+      {/* self-care */}
       {step === 5 && (
         <Step eyebrow="LANGKAH 6 DARI 7" title="Bagaimana kebersihan & perawatan diri?" hint="Mandi, ganti baju, kebersihan umum." onBack={() => setStep(4)}>
           <div className="flex flex-col gap-3">
@@ -218,7 +218,7 @@ export default function CheckinWizard({ patientName }: { patientName: string }) 
         </Step>
       )}
 
-      {/* Step 6 — Notes + behavior change */}
+      {/* notes + behavior change */}
       {step === 6 && (
         <Step eyebrow="LANGKAH 7 DARI 7" title="Ada yang ingin dicatat?" hint="Opsional — kata-kata, kebiasaan yang berubah, apa saja." onBack={() => setStep(5)}>
           <div className="mb-4">

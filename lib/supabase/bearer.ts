@@ -2,13 +2,12 @@ import { createClient as createSsrClient } from "@/lib/supabase/server";
 import { createClient as createJsClient } from "@supabase/supabase-js";
 
 /**
- * Resolve the caller for API routes that accept BOTH:
- * 1. Browser/WebView calls (session cookies via @supabase/ssr), and
- * 2. Native WorkManager calls (Authorization: Bearer <supabase access token>,
- *    PRD §11 — the worker has no cookies).
+ * Resolve the caller for api routes that accept both:
+ * 1. browser/webview calls (session cookies via @supabase/ssr), and
+ * 2. native workmanager calls (authorization: bearer token — no cookies).
  *
- * Returns { supabase, user } or { supabase: null, user: null } when
- * unauthenticated. RLS still applies in both paths (PRD §35).
+ * returns { supabase, user } or { supabase: null, user: null } when
+ * unauthenticated. rls still applies in both paths.
  */
 export async function resolveApiAuth(req: Request): Promise<{
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -16,7 +15,7 @@ export async function resolveApiAuth(req: Request): Promise<{
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   user: any | null;
 }> {
-  // Path 1: cookie session (browser / WebView)
+  // path 1: cookie session (browser / webview)
   try {
     const ssr = createSsrClient();
     const { data } = await ssr.auth.getUser();
@@ -25,7 +24,7 @@ export async function resolveApiAuth(req: Request): Promise<{
     /* fall through to bearer */
   }
 
-  // Path 2: Bearer token (native background worker)
+  // path 2: bearer token (native background worker)
   const header = req.headers.get("authorization") ?? req.headers.get("Authorization");
   const token = header?.startsWith("Bearer ") ? header.slice(7) : null;
   if (token) {
