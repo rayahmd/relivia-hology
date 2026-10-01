@@ -37,6 +37,8 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
   const [syncing, setSyncing] = useState(false);
   /** actual Health Connect permission state (null = unknown yet). */
   const [connected, setConnected] = useState<boolean | null>(null);
+  /** background access missing while otherwise connected. */
+  const [bgMissing, setBgMissing] = useState(false);
   /** synchronous click lock — state alone can't stop same-frame double taps. */
   const lockRef = useRef(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -76,7 +78,9 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
           // so a relaunch shows "Health Connect Terhubung" with no taps.
           (async () => {
             const p = await checkHealthPermissions();
-            if (!cancelled && p) setConnected(p.allGranted);
+            if (cancelled || !p) return;
+            setConnected(p.allGranted);
+            setBgMissing(p.allGranted && !p.granted.includes(HEALTH_BACKGROUND_PERMISSION));
           })(),
         ]);
       }
@@ -155,6 +159,7 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
     setBusy(true);
     setMessage(null);
     setShowSettingsFallback(false);
+    setBgMissing(false);
     try {
       const onNative = await isNative();
 
@@ -224,6 +229,7 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
       // background access verified separately — never gates sync.
       const hasBackground = granted.includes(HEALTH_BACKGROUND_PERMISSION);
       if (!hasBackground) setShowSettingsFallback(true);
+      setBgMissing(!hasBackground);
       const bgNote = hasBackground
         ? ""
         : " Untuk sinkronisasi otomatis, aktifkan juga akses background lewat Pengaturan kesehatan di bawah.";
@@ -300,16 +306,23 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
         </p>
 
         <div className="flex flex-col gap-2">
-          <button
-            onClick={handleConnect}
-            disabled={busy || syncing}
-            className="text-[12px] font-bold px-4 py-2 rounded-full bg-[#F9C6DD] text-[#6D28D9] hover:brightness-95 transition disabled:opacity-60 text-left"
-          >
-            {syncing ? "Menyinkronkan…" : busy ? "Memproses…" : connected ? "Health Connect Terhubung" : "Hubungkan Health Connect"}
-          </button>
+          {connected ? (
+            // connected = status only, non-clickable so it can't spam sync.
+            <span className="text-[12px] font-bold px-4 py-2 rounded-full bg-[#F9C6DD] text-[#6D28D9] text-left">
+              Health Connect Terhubung
+            </span>
+          ) : (
+            <button
+              onClick={handleConnect}
+              disabled={busy || syncing}
+              className="text-[12px] font-bold px-4 py-2 rounded-full bg-[#F9C6DD] text-[#6D28D9] hover:brightness-95 transition disabled:opacity-60 text-left"
+            >
+              {syncing ? "Menyinkronkan…" : busy ? "Memproses…" : "Hubungkan Health Connect"}
+            </button>
+          )}
         </div>
 
-        {native && showSettingsFallback && (
+        {native && (bgMissing || (showSettingsFallback && !connected)) && (
           <button
             onClick={() => openHealthSettings()}
             className="mt-2 text-[12px] font-bold px-4 py-2 rounded-full bg-white/20 text-white hover:bg-white/30 transition"
