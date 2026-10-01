@@ -35,6 +35,11 @@ type ReliviaHealthPluginApi = {
     token: string;
   }) => Promise<{ scheduled: boolean }>;
   disableBackgroundSync: () => Promise<{ scheduled: boolean }>;
+  syncNow: (opts: {
+    backendUrl: string;
+    patientId: string;
+    token: string;
+  }) => Promise<{ enqueued: boolean }>;
   notifyAgent: (opts: { type: string; sessionId: string }) => Promise<{ notified: boolean }>;
   getAppVersion: () => Promise<{ version: string; versionCode: number }>;
   openNotificationSettings: () => Promise<{ opened: boolean }>;
@@ -266,6 +271,31 @@ export async function disableBackgroundSync(): Promise<void> {
     await plugin.disableBackgroundSync();
   } catch {
     /* ignore */
+  }
+}
+
+/** background-read permission string, as reported inside the granted set. */
+export const HEALTH_BACKGROUND_PERMISSION =
+  "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND";
+
+/**
+ * one-shot immediate sync (last 7 days via HealthSyncWorker). no-op on
+ * web, false when the native call fails — the periodic worker still
+ * covers the sync in that case.
+ */
+export async function syncNow(opts: {
+  backendUrl: string;
+  patientId: string;
+  token: string;
+}): Promise<boolean> {
+  await ensurePlugin();
+  const plugin = getPlugin();
+  if (!plugin) return false;
+  try {
+    const res = await plugin.syncNow(opts);
+    return res.enqueued;
+  } catch {
+    return false;
   }
 }
 

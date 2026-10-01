@@ -33,34 +33,50 @@ class HealthSyncWorker(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        val debugTag = HealthConnectReader.DEBUG_TAG
+        val startMs = android.os.SystemClock.elapsedRealtime()
+        Log.d(debugTag, "worker.start: work=${HealthSyncWorker.WORK_NAME} runAttempt=$runAttemptCount")
         val backendUrl = inputData.getString(KEY_BACKEND_URL).orEmpty()
         val patientId = inputData.getString(KEY_PATIENT_ID).orEmpty()
         val token = inputData.getString(KEY_TOKEN).orEmpty()
 
         if (backendUrl.isEmpty() || patientId.isEmpty() || token.isEmpty()) {
             Log.w(TAG, "Missing input data — failing without retry")
+            Log.e(HealthConnectReader.DEBUG_TAG, "worker.end: missingInput backendEmpty=${backendUrl.isEmpty()} patientEmpty=${patientId.isEmpty()} tokenEmpty=${token.isEmpty()} result=failure(no-retry)")
             return@withContext Result.failure()
         }
 
         // Health Connect availability gate (PRD §31)
-        if (HealthConnectClient.getSdkStatus(applicationContext) !=
+        val sdkStatus = HealthConnectClient.getSdkStatus(applicationContext)
+        Log.d(HealthConnectReader.DEBUG_TAG, "worker.availability: sdkStatus=$sdkStatus available=${sdkStatus == HealthConnectClient.SDK_AVAILABLE}")
+        if (sdkStatus !=
             HealthConnectClient.SDK_AVAILABLE
         ) {
             Log.i(TAG, "Health Connect unavailable — retry next cycle")
+            Log.w(HealthConnectReader.DEBUG_TAG, "worker.end: unavailable sdkStatus=$sdkStatus result=retry elapsedMs=${android.os.SystemClock.elapsedRealtime() - startMs}")
             return@withContext Result.retry()
         }
 
         try {
             val granted =
                 HealthConnectReader.grantedPermissions(applicationContext)
-            if (!granted.containsAll(HealthConnectReader.READ_PERMISSIONS)) {
+            val allGranted = granted.containsAll(HealthConnectReader.READ_PERMISSIONS)
+            Log.d(HealthConnectReader.DEBUG_TAG, "worker.permCheck: granted=$granted allGranted=$allGranted result=${if (allGranted) "proceed" else "retry"}")
+            if (!allGranted) {
                 Log.i(TAG, "Permissions not granted — retry next cycle")
+                Log.w(HealthConnectReader.DEBUG_TAG, "worker.end: permDenied result=retry elapsedMs=${android.os.SystemClock.elapsedRealtime() - startMs}")
                 return@withContext Result.retry()
             }
 
-            val points = HealthConnectReader.readDaily(applicationContext, daysBack = 1)
+            // 7 calendar days: today + yesterday + previous 5 (0..6 inclusive).
+            val daysBack = 6
+            Log.d(HealthConnectReader.DEBUG_TAG, "worker.sync.start: daysBack=$daysBack expectedDates=7")
+            Log.d(HealthConnectReader.DEBUG_TAG, "worker.readDaily.start")
+            val points = HealthConnectReader.readDaily(applicationContext, daysBack = daysBack)
+            Log.d(HealthConnectReader.DEBUG_TAG, "worker.readDaily.end points=${points.size} types=${points.map { it.dataType }}")
             if (points.isEmpty()) {
                 Log.i(TAG, "No new health data — nothing to sync")
+                Log.d(HealthConnectReader.DEBUG_TAG, "worker.end: emptyResult result=success elapsedMs=${android.os.SystemClock.elapsedRealtime() - startMs}")
                 return@withContext Result.success()
             }
 
@@ -82,17 +98,27 @@ class HealthSyncWorker(
                     },
                 )
 
+            Log.d(HealthConnectReader.DEBUG_TAG, "worker.upload.start: uploading points=${points.size}")
             val responseBody = postJson("$backendUrl/api/health-sync", token, payload)
             Log.i(TAG, "Synced ${points.size} records")
+            Log.d(HealthConnectReader.DEBUG_TAG, "worker.end: success synced=${points.size} result=success elapsedMs=${android.os.SystemClock.elapsedRealtime() - startMs}")
             // Background path has no WebView: deliver the agent trigger as a
             // real system notification straight from the worker (PRD §21).
             postAgentNotificationIfPresent(responseBody)
             Result.success()
         } catch (e: NonRetryableException) {
             Log.w(TAG, "Non-retryable error: ${e.message}")
+            Log.e(HealthConnectReader.DEBUG_TAG, "worker.end: FAILED nonRetryable class=${e.javaClass.name} msg=${e.message} result=failure(no-retry)", e)
             Result.failure()
         } catch (e: Exception) {
             Log.w(TAG, "Sync failed, will retry: ${e.message}")
+            val kind = when (e) {
+                is SecurityException -> "SecurityException/permission-issue"
+                is IllegalArgumentException -> "IllegalArgumentException/invalid-query"
+                is IllegalStateException -> "IllegalStateException/unavailable?"
+                else -> "other-runtime"
+            }
+            Log.e(HealthConnectReader.DEBUG_TAG, "worker.end: FAILED kind=$kind class=${e.javaClass.name} msg=${e.message} result=retry elapsedMs=${android.os.SystemClock.elapsedRealtime() - startMs}", e)
             Result.retry()
         }
     }

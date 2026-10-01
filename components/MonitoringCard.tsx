@@ -7,12 +7,14 @@ import { useAutoMonitor } from "@/components/AutoMonitorProvider";
 import {
   backendBaseUrl,
   enableBackgroundSync,
+  syncNow,
   getAppVersion,
   healthAvailability,
   isNative,
   openHealthSettings,
   requestHealthPermissions,
   requestNotificationPermission,
+  HEALTH_BACKGROUND_PERMISSION,
 } from "@/lib/nativeBridge";
 
 /**
@@ -116,9 +118,9 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
   }
 
   async function handleConnect() {
-    // already connected → ignore (button is also disabled; second layer
-    // so background sync is never scheduled twice).
-    if (monitoringActive) return;
+    // never gate on the local monitoringActive flag: permission state
+    // comes from Health Connect itself on every click, so returning
+    // users can always re-sync. (busy disables the button meanwhile.)
     setBusy(true);
     setMessage(null);
     setShowSettingsFallback(false);
@@ -130,7 +132,8 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
         // working whatever the health-data result is.
         const notifGranted = await requestNotificationPermission();
 
-        // 1. Minta izin akses data kesehatan.
+        // 1. Minta izin akses data kesehatan. Already-granted → native
+        // fast path resolves without showing the permission screen.
         let perm;
         try {
           perm = await requestHealthPermissions();
@@ -141,7 +144,7 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
         if (!perm.allGranted) {
           setShowSettingsFallback(true);
           setMessage(
-            `Izin akses data kesehatan belum lengkap. Buka Pengaturan, aktifkan semua izin baca untuk Relivia, lalu tekan Hubungkan lagi.${
+            `Izin akses data kesehatan belum lengkap. Buka Pengaturan, aktifkan semua izin baca untuk Relivia, lalu tekan Sinkronkan lagi.${
               !notifGranted ? " (Izin notifikasi sistem juga belum diaktifkan.)" : ""
             }`
           );
@@ -158,15 +161,38 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
           token,
         });
         if (!scheduled) throw new Error("Gagal menjadwalkan sinkronisasi otomatis.");
+        // 3. One-shot import 7 hari terakhir sekarang juga (tanpa
+        // menunggu siklus 6 jam). Best effort: periodic worker
+        // meng-cover bila ini gagal.
+        let immediate = false;
+        try {
+          immediate = await syncNow({
+            backendUrl: backendBaseUrl(),
+            patientId,
+            token,
+          });
+        } catch {
+          immediate = false;
+        }
         setMonitoringActive(true);
-        // 3. Kirim satu notifikasi konfirmasi sebagai bukti sistem berfungsi.
+        // 4. Background access diverifikasi terpisah dari izin
+        // foreground — tidak pernah menghalangi tombol/sync. Bila
+        // belum ada, arahkan ke Pengaturan kesehatan untuk pemulihan.
+        const hasBackground = (perm.granted ?? []).includes(
+          HEALTH_BACKGROUND_PERMISSION
+        );
+        if (!hasBackground) setShowSettingsFallback(true);
+        const bgNote = hasBackground
+          ? ""
+          : " Untuk sinkronisasi otomatis, aktifkan juga akses background lewat Pengaturan kesehatan di bawah.";
+        // 5. Kirim satu notifikasi konfirmasi sebagai bukti sistem berfungsi.
         const confirmed = await fireConfirmationNotification();
         setMessage(
           confirmed
-            ? "✅ Monitoring aktif. Cek notifikasi di HP Anda — pesan konfirmasi akan muncul dalam beberapa detik."
+            ? `✅ ${immediate ? "Sinkronisasi dimulai." : "Monitoring aktif."} Cek notifikasi di HP Anda — pesan konfirmasi akan muncul dalam beberapa detik.${bgNote}`
             : notifGranted
-              ? "✅ Monitoring aktif. Data akan disinkronkan otomatis di background."
-              : "✅ Monitoring aktif, tapi izin notifikasi sistem ditolak — pembaruan hanya muncul sebagai banner di aplikasi. Aktifkan via Pengaturan > Aplikasi > Relivia > Notifikasi."
+              ? `✅ ${immediate ? "Sinkronisasi dimulai, data 7 hari terakhir akan diimpor." : "Monitoring aktif. Data akan disinkronkan otomatis di background."}${bgNote}`
+              : `✅ Monitoring aktif, tapi izin notifikasi sistem ditolak — pembaruan hanya muncul sebagai banner di aplikasi. Aktifkan via Pengaturan > Aplikasi > Relivia > Notifikasi.${bgNote}`
         );
       } else {
         // web: monitoring runs on periodic sync while the app is open.
@@ -222,10 +248,10 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
         <div className="flex flex-col gap-2">
           <button
             onClick={handleConnect}
-            disabled={busy || monitoringActive}
+            disabled={busy}
             className="text-[12px] font-bold px-4 py-2 rounded-full bg-[#F9C6DD] text-[#6D28D9] hover:brightness-95 transition disabled:opacity-60 text-left"
           >
-            {busy ? "Menghubungkan…" : monitoringActive ? "Health Connect Terhubung" : "Hubungkan Health Connect"}
+            {busy ? "Memproses…" : monitoringActive ? "Sinkronkan Data Kesehatan" : "Hubungkan Health Connect"}
           </button>
         </div>
 
