@@ -13,7 +13,6 @@ import {
   getManualSyncState,
   healthAvailability,
   isNative,
-  openHealthSettings,
   requestHealthPermissions,
   requestNotificationPermission,
   HEALTH_BACKGROUND_PERMISSION,
@@ -37,12 +36,9 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
   const [syncing, setSyncing] = useState(false);
   /** actual Health Connect permission state (null = unknown yet). */
   const [connected, setConnected] = useState<boolean | null>(null);
-  /** background access missing while otherwise connected. */
-  const [bgMissing, setBgMissing] = useState(false);
   /** synchronous click lock — state alone can't stop same-frame double taps. */
   const lockRef = useRef(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [showSettingsFallback, setShowSettingsFallback] = useState(false);
   const [appVersion, setAppVersion] = useState<string | null>(null);
 
   useEffect(() => {
@@ -80,7 +76,6 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
             const p = await checkHealthPermissions();
             if (cancelled || !p) return;
             setConnected(p.allGranted);
-            setBgMissing(p.allGranted && !p.granted.includes(HEALTH_BACKGROUND_PERMISSION));
           })(),
         ]);
       }
@@ -158,8 +153,6 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
     lockRef.current = true;
     setBusy(true);
     setMessage(null);
-    setShowSettingsFallback(false);
-    setBgMissing(false);
     try {
       const onNative = await isNative();
 
@@ -190,12 +183,10 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
         try {
           perm = await requestHealthPermissions();
         } catch (e) {
-          setShowSettingsFallback(true);
           throw new Error(healthErrorMessage(e));
         }
         if (!perm.allGranted) {
           setConnected(false);
-          setShowSettingsFallback(true);
           setMessage(
             `Izin akses data kesehatan belum lengkap. Buka Pengaturan, aktifkan semua izin baca untuk Relivia, lalu tekan Hubungkan lagi.${
               !notifGranted ? " (Izin notifikasi sistem juga belum diaktifkan.)" : ""
@@ -228,11 +219,9 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
       }).catch(() => ({ enqueued: false, alreadyRunning: false }));
       // background access verified separately — never gates sync.
       const hasBackground = granted.includes(HEALTH_BACKGROUND_PERMISSION);
-      if (!hasBackground) setShowSettingsFallback(true);
-      setBgMissing(!hasBackground);
       const bgNote = hasBackground
         ? ""
-        : " Untuk sinkronisasi otomatis, aktifkan juga akses background lewat Pengaturan kesehatan di bawah.";
+        : " Untuk sinkronisasi otomatis, aktifkan juga akses background di pengaturan Health Connect.";
       setMonitoringActive(true);
       if (!enqueued && !alreadyRunning) {
         // native call failed and nothing is running: periodic covers it.
@@ -321,15 +310,6 @@ export default function MonitoringCard({ patientId }: { patientId: string }) {
             </button>
           )}
         </div>
-
-        {native && (bgMissing || (showSettingsFallback && !connected)) && (
-          <button
-            onClick={() => openHealthSettings()}
-            className="mt-2 text-[12px] font-bold px-4 py-2 rounded-full bg-white/20 text-white hover:bg-white/30 transition"
-          >
-            ⚙️ Buka Pengaturan Kesehatan
-          </button>
-        )}
 
         {message && (
           <div
