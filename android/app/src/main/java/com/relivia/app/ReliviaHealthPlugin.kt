@@ -12,9 +12,11 @@ import androidx.health.connect.client.PermissionController
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.getcapacitor.JSObject
@@ -56,6 +58,14 @@ class ReliviaHealthPlugin : Plugin() {
         const val NOTIFICATION_ALIAS = "notifications"
         const val TAG = "ReliviaHealth"
         const val DEBUG_TAG = "ReliviaHealthDebug"
+        /**
+         * Unique name for the manual one-shot sync. Separate from the
+         * periodic [HealthSyncWorker.WORK_NAME] (unique periodic and
+         * one-time work share one namespace — reusing that name would
+         * break the 6-hour schedule). KEEP policy + active-check below
+         * guarantee at most one manual sync at a time.
+         */
+        const val MANUAL_WORK_NAME = "relivia_health_sync_manual"
     }
 
     /** Guards against concurrent permission launches (no stacked screens). */
@@ -246,6 +256,33 @@ class ReliviaHealthPlugin : Plugin() {
         }.start()
     }
 
+    /**
+     * UI-free permission snapshot: returns the actual Health Connect
+     * granted set without ever opening the permission screen. Used to
+     * restore the connected state after relaunch and to decide whether
+     * a click needs the permission flow or can go straight to sync.
+     */
+    @PluginMethod
+    fun checkHealthPermissions(call: PluginCall) {
+        Log.d(DEBUG_TAG, "plugin.checkHealthPermissions.start")
+        Thread {
+            try {
+                val granted = runBlocking {
+                    HealthConnectReader.grantedPermissions(context)
+                }
+                val all = granted.containsAll(HealthConnectReader.READ_PERMISSIONS)
+                val ret = JSObject()
+                ret.put("granted", JSONArray(granted.toList()))
+                ret.put("allGranted", all)
+                Log.d(DEBUG_TAG, "plugin.checkHealthPermissions.end: allGranted=$all")
+                call.resolve(ret)
+            } catch (e: Exception) {
+                Log.e(DEBUG_TAG, "plugin.checkHealthPermissions.end: FAILED class=${e.javaClass.name} msg=${e.message}", e)
+                call.reject("CHECK_FAILED", e.message, e)
+            }
+        }.start()
+    }
+
     @PluginMethod
     fun readHealth(call: PluginCall) {
         val daysBack = call.getInt("daysBack", 1) ?: 1
@@ -304,6 +341,7 @@ class ReliviaHealthPlugin : Plugin() {
             HealthSyncWorker.KEY_BACKEND_URL to backendUrl,
             HealthSyncWorker.KEY_PATIENT_ID to patientId,
             HealthSyncWorker.KEY_TOKEN to token,
+            HealthSyncWorker.KEY_TRIGGER to "periodic",
         )
         val request = PeriodicWorkRequestBuilder<HealthSyncWorker>(
             repeatInterval = Duration.ofHours(6),
@@ -321,11 +359,21 @@ class ReliviaHealthPlugin : Plugin() {
             request,
         )
         // Immediate one-shot 7-day import so the first sync doesn't wait
-        // for the 6-hour cycle. Same worker / payload as the periodic path.
-        WorkManager.getInstance(context).enqueue(
+        // for the 6-hour cycle. Unique KEEP: never duplicates a running
+        // manual sync, never touches the periodic schedule.
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            MANUAL_WORK_NAME,
+            ExistingWorkPolicy.KEEP,
             OneTimeWorkRequestBuilder<HealthSyncWorker>()
                 .setConstraints(syncConstraints())
-                .setInputData(input)
+                .setInputData(
+                    workDataOf(
+                        HealthSyncWorker.KEY_BACKEND_URL to backendUrl,
+                        HealthSyncWorker.KEY_PATIENT_ID to patientId,
+                        HealthSyncWorker.KEY_TOKEN to token,
+                        HealthSyncWorker.KEY_TRIGGER to "manual",
+                    )
+                )
                 .build()
         )
         Log.d(DEBUG_TAG, "plugin.enableBackgroundSync: periodic scheduled + one-time immediate enqueued")
@@ -336,8 +384,10 @@ class ReliviaHealthPlugin : Plugin() {
 
     /**
      * Manual one-shot sync (last 7 calendar days via HealthSyncWorker).
-     * Same worker / payload as enableBackgroundSync; callable without
-     * waiting for the 6-hour cycle.
+     * At most one manual sync runs at a time: an active (enqueued or
+     * running) manual worker rejects the request with alreadyRunning,
+     * and KEEP backs that up against races. Resolves off the main
+     * thread since the WorkManager query blocks.
      */
     @PluginMethod
     fun syncNow(call: PluginCall) {
@@ -348,22 +398,76 @@ class ReliviaHealthPlugin : Plugin() {
             call.reject("INVALID_ARGS", "backendUrl, patientId, token required")
             return
         }
-        Log.d(DEBUG_TAG, "plugin.syncNow.start: enqueuing one-time 7-day import")
-        val immediate = OneTimeWorkRequestBuilder<HealthSyncWorker>()
-            .setConstraints(syncConstraints())
-            .setInputData(
-                workDataOf(
-                    HealthSyncWorker.KEY_BACKEND_URL to backendUrl,
-                    HealthSyncWorker.KEY_PATIENT_ID to patientId,
-                    HealthSyncWorker.KEY_TOKEN to token,
-                )
-            )
-            .build()
-        WorkManager.getInstance(context).enqueue(immediate)
-        Log.d(DEBUG_TAG, "plugin.syncNow.end: enqueued workId=${immediate.id}")
-        val ret = JSObject()
-        ret.put("enqueued", true)
-        call.resolve(ret)
+        Log.d(DEBUG_TAG, "plugin.syncNow.start: requesting one-time 7-day import")
+        Thread {
+            try {
+                val wm = WorkManager.getInstance(context)
+                if (isManualSyncActive(wm)) {
+                    Log.w(DEBUG_TAG, "plugin.syncNow.rejected: manual sync already enqueued/running — ignoring duplicate")
+                    val ret = JSObject()
+                    ret.put("enqueued", false)
+                    ret.put("alreadyRunning", true)
+                    call.resolve(ret)
+                    return@Thread
+                }
+                val immediate = OneTimeWorkRequestBuilder<HealthSyncWorker>()
+                    .setConstraints(syncConstraints())
+                    .setInputData(
+                        workDataOf(
+                            HealthSyncWorker.KEY_BACKEND_URL to backendUrl,
+                            HealthSyncWorker.KEY_PATIENT_ID to patientId,
+                            HealthSyncWorker.KEY_TOKEN to token,
+                            HealthSyncWorker.KEY_TRIGGER to "manual",
+                        )
+                    )
+                    .build()
+                wm.enqueueUniqueWork(MANUAL_WORK_NAME, ExistingWorkPolicy.KEEP, immediate)
+                Log.d(DEBUG_TAG, "plugin.syncNow.accepted: enqueued workId=${immediate.id}")
+                val ret = JSObject()
+                ret.put("enqueued", true)
+                ret.put("alreadyRunning", false)
+                call.resolve(ret)
+            } catch (e: Exception) {
+                Log.e(DEBUG_TAG, "plugin.syncNow.end: FAILED class=${e.javaClass.name} msg=${e.message}", e)
+                call.reject("SYNC_FAILED", e.message, e)
+            }
+        }.start()
+    }
+
+    /**
+     * Current manual-sync state for the UI lock: idle | enqueued | running.
+     * Polled while a sync is in progress so the button stays disabled
+     * until the worker actually finishes.
+     */
+    @PluginMethod
+    fun getManualSyncState(call: PluginCall) {
+        Thread {
+            try {
+                val wm = WorkManager.getInstance(context)
+                val infos = wm.getWorkInfosForUniqueWork(MANUAL_WORK_NAME).get()
+                val state = when {
+                    infos.any { it.state == WorkInfo.State.RUNNING } -> "running"
+                    infos.any { !it.state.isFinished } -> "enqueued"
+                    else -> "idle"
+                }
+                val ret = JSObject()
+                ret.put("state", state)
+                call.resolve(ret)
+            } catch (e: Exception) {
+                call.reject("STATE_FAILED", e.message, e)
+            }
+        }.start()
+    }
+
+    /** true when a manual one-time worker is enqueued or running. */
+    private fun isManualSyncActive(wm: WorkManager): Boolean {
+        return try {
+            wm.getWorkInfosForUniqueWork(MANUAL_WORK_NAME).get()
+                .any { !it.state.isFinished }
+        } catch (e: Exception) {
+            Log.w(DEBUG_TAG, "plugin.manualState.checkFailed: ${e.message} — proceeding, KEEP still dedups")
+            false
+        }
     }
 
     private fun syncConstraints(): Constraints =

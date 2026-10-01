@@ -28,6 +28,8 @@ export type NativeHealthPoint = {
 type ReliviaHealthPluginApi = {
   isAvailable: () => Promise<{ available: boolean; sdkStatus?: number }>;
   requestHealthPermissions: () => Promise<{ granted: string[]; allGranted: boolean }>;
+  checkHealthPermissions: () => Promise<{ granted: string[]; allGranted: boolean }>;
+  getManualSyncState: () => Promise<{ state: string }>;
   readHealth: (opts: { daysBack?: number }) => Promise<{ data: NativeHealthPoint[] }>;
   enableBackgroundSync: (opts: {
     backendUrl: string;
@@ -39,7 +41,7 @@ type ReliviaHealthPluginApi = {
     backendUrl: string;
     patientId: string;
     token: string;
-  }) => Promise<{ enqueued: boolean }>;
+  }) => Promise<{ enqueued: boolean; alreadyRunning?: boolean }>;
   notifyAgent: (opts: { type: string; sessionId: string }) => Promise<{ notified: boolean }>;
   getAppVersion: () => Promise<{ version: string; versionCode: number }>;
   openNotificationSettings: () => Promise<{ opened: boolean }>;
@@ -280,22 +282,54 @@ export const HEALTH_BACKGROUND_PERMISSION =
 
 /**
  * one-shot immediate sync (last 7 days via HealthSyncWorker). no-op on
- * web, false when the native call fails — the periodic worker still
- * covers the sync in that case.
+ * web. alreadyRunning=true when a manual sync is already active — the
+ * caller must NOT enqueue again, only wait for it to finish.
  */
 export async function syncNow(opts: {
   backendUrl: string;
   patientId: string;
   token: string;
-}): Promise<boolean> {
+}): Promise<{ enqueued: boolean; alreadyRunning: boolean }> {
   await ensurePlugin();
   const plugin = getPlugin();
-  if (!plugin) return false;
+  if (!plugin) return { enqueued: false, alreadyRunning: false };
   try {
     const res = await plugin.syncNow(opts);
-    return res.enqueued;
+    return { enqueued: !!res.enqueued, alreadyRunning: !!res.alreadyRunning };
   } catch {
-    return false;
+    return { enqueued: false, alreadyRunning: false };
+  }
+}
+
+/**
+ * ui-free snapshot of the actual Health Connect granted set. null on
+ * web / on error. never opens the permission screen.
+ */
+export async function checkHealthPermissions(): Promise<{
+  granted: string[];
+  allGranted: boolean;
+} | null> {
+  await ensurePlugin();
+  const plugin = getPlugin();
+  if (!plugin) return null;
+  try {
+    const res = await withTimeout(plugin.checkHealthPermissions(), 5000, "checkHealthPermissions");
+    return { granted: res.granted ?? [], allGranted: !!res.allGranted };
+  } catch {
+    return null;
+  }
+}
+
+/** manual one-shot worker state: idle | enqueued | running. idle on web. */
+export async function getManualSyncState(): Promise<"idle" | "enqueued" | "running"> {
+  await ensurePlugin();
+  const plugin = getPlugin();
+  if (!plugin) return "idle";
+  try {
+    const res = await withTimeout(plugin.getManualSyncState(), 5000, "getManualSyncState");
+    return res.state === "running" || res.state === "enqueued" ? res.state : "idle";
+  } catch {
+    return "idle";
   }
 }
 

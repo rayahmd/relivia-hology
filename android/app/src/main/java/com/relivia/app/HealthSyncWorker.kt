@@ -35,7 +35,8 @@ class HealthSyncWorker(
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val debugTag = HealthConnectReader.DEBUG_TAG
         val startMs = android.os.SystemClock.elapsedRealtime()
-        Log.d(debugTag, "worker.start: work=${HealthSyncWorker.WORK_NAME} runAttempt=$runAttemptCount")
+        val trigger = inputData.getString(KEY_TRIGGER) ?: "periodic"
+        Log.d(debugTag, "worker.start: work=${HealthSyncWorker.WORK_NAME} trigger=$trigger runAttempt=$runAttemptCount")
         val backendUrl = inputData.getString(KEY_BACKEND_URL).orEmpty()
         val patientId = inputData.getString(KEY_PATIENT_ID).orEmpty()
         val token = inputData.getString(KEY_TOKEN).orEmpty()
@@ -174,5 +175,6 @@ class HealthSyncWorker(
         const val KEY_BACKEND_URL = "backend_url"
         const val KEY_PATIENT_ID = "patient_id"
         const val KEY_TOKEN = "access_token"
+        const val KEY_TRIGGER = "trigger" // "manual" | "periodic"
     }
 }
